@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{8a790e08-dc14-48b6-a5dc-ce7a29ab573a}</ProjectGuid>
+    <RootNamespace>WorldOfClans</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)Build\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)Build\Intermediate\$(Configuration)\</IntDir>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)ThirdParty\VulkanHeaders;$(ProjectDir)ThirdParty\volk;$(ProjectDir)ThirdParty\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>VK_USE_PLATFORM_WIN32_KHR;VK_NO_PROTOTYPES;NOMINMAX;_CRT_SECURE_NO_WARNINGS;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+      
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>gdi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PreBuildEvent>
+      <Command>"$(ProjectDir)Tools\compile_shaders.bat" "$(ProjectDir)"</Command>
+      <Message>Compiling GLSL shaders to SPIR-V</Message>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)ThirdParty\VulkanHeaders;$(ProjectDir)ThirdParty\volk;$(ProjectDir)ThirdParty\stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>VK_USE_PLATFORM_WIN32_KHR;VK_NO_PROTOTYPES;NOMINMAX;_CRT_SECURE_NO_WARNINGS;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking><IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>gdi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PreBuildEvent>
+      <Command>"$(ProjectDir)Tools\compile_shaders.bat" "$(ProjectDir)"</Command>
+      <Message>Compiling GLSL shaders to SPIR-V</Message>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Application.cpp" />
+    <ClCompile Include="Source\Core\Config.cpp" />
+    <ClCompile Include="Source\Core\EventBus.cpp" />
+    <ClCompile Include="Source\Core\ImageIO.cpp" />
+    <ClCompile Include="Source\Core\Json.cpp" />
+    <ClCompile Include="Source\Core\Log.cpp" />
+    <ClCompile Include="Source\Core\Paths.cpp" />
+    <ClCompile Include="Source\Core\Settings.cpp" />
+    <ClCompile Include="Source\Game\Decorators\SettlementDecorators.cpp" />
+    <ClCompile Include="Source\Game\Factories\CharacterFactory.cpp" />
+    <ClCompile Include="Source\Game\Factories\EvaluatorFactory.cpp" />
+    <ClCompile Include="Source\Game\Factories\NamePool.cpp" />
+    <ClCompile Include="Source\Game\Factories\SettlementFactory.cpp" />
+    <ClCompile Include="Source\Game\Factories\UnitFactory.cpp" />
+    <ClCompile Include="Source\Game\Map\MapData.cpp" />
+    <ClCompile Include="Source\Game\Map\MapLoader.cpp" />
+    <ClCompile Include="Source\Game\Map\Pathfinder.cpp" />
+    <ClCompile Include="Source\Game\Map\TerrainTypes.cpp" />
+    <ClCompile Include="Source\Game\Players\AIPlayer.cpp" />
+    <ClCompile Include="Source\Game\SaveGame.cpp" />
+    <ClCompile Include="Source\Game\Systems\BattleSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\CoverageSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\DiplomacySystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\DynastySystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\EconomySystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\ForestrySystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\MovementSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\PoliticsSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\PopulationSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\SettlementSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\Simulation.cpp" />
+    <ClCompile Include="Source\Game\WorldGenerator.cpp" />
+    <ClCompile Include="Source\Game\World\BuildingDatabase.cpp" />
+    <ClCompile Include="Source\Game\World\Character.cpp" />
+    <ClCompile Include="Source\Game\World\Clan.cpp" />
+    <ClCompile Include="Source\Game\World\Cohort.cpp" />
+    <ClCompile Include="Source\Game\World\GameTime.cpp" />
+    <ClCompile Include="Source\Game\World\RaceDatabase.cpp" />
+    <ClCompile Include="Source\Game\World\Settlement.cpp" />
+    <ClCompile Include="Source\Game\World\SettlementDatabase.cpp" />
+    <ClCompile Include="Source\Game\World\State.cpp" />
+    <ClCompile Include="Source\Game\World\Unit.cpp" />
+    <ClCompile Include="Source\Game\World\UnitDatabase.cpp" />
+    <ClCompile Include="Source\Game\World\World.cpp" />
+    <ClCompile Include="Source\Platform\Input.cpp" />
+    <ClCompile Include="Source\Platform\Window.cpp" />
+    <ClCompile Include="Source\Render\Camera.cpp" />
+    <ClCompile Include="Source\Render\FontAtlas.cpp" />
+    <ClCompile Include="Source\Render\Pipeline.cpp" />
+    <ClCompile Include="Source\Render\Renderer.cpp" />
+    <ClCompile Include="Source\Render\VulkanBuffer.cpp" />
+    <ClCompile Include="Source\Render\VulkanDevice.cpp" />
+    <ClCompile Include="Source\Render\VulkanSwapchain.cpp" />
+    <ClCompile Include="Source\Scenes\EditorScene.cpp" />
+    <ClCompile Include="Source\Scenes\EditorSceneUI.cpp" />
+    <ClCompile Include="Source\Scenes\GameScene.cpp" />
+    <ClCompile Include="Source\Scenes\GameSceneHud.cpp" />
+    <ClCompile Include="Source\Scenes\MainMenuScene.cpp" />
+    <ClCompile Include="Source\Scenes\PartySetupScene.cpp" />
+    <ClCompile Include="Source\Scenes\SceneFactory.cpp" />
+    <ClCompile Include="Source\Scenes\SceneManager.cpp" />
+    <ClCompile Include="Source\Scenes\SettingsScene.cpp" />
+    <ClCompile Include="Source\UI\Theme.cpp" />
+    <ClCompile Include="Source\UI\UI.cpp" />
+    <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="ThirdParty\volk\volk.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\Application.h" />
+    <ClInclude Include="Source\Core\Config.h" />
+    <ClInclude Include="Source\Core\EventBus.h" />
+    <ClInclude Include="Source\Core\ImageIO.h" />
+    <ClInclude Include="Source\Core\Json.h" />
+    <ClInclude Include="Source\Core\Log.h" />
+    <ClInclude Include="Source\Core\Math.h" />
+    <ClInclude Include="Source\Core\Paths.h" />
+    <ClInclude Include="Source\Core\Random.h" />
+    <ClInclude Include="Source\Core\Settings.h" />
+    <ClInclude Include="Source\Core\Singleton.h" />
+    <ClInclude Include="Source\Core\Types.h" />
+    <ClInclude Include="Source\Game\Decorators\ISettlementEvaluator.h" />
+    <ClInclude Include="Source\Game\Decorators\SettlementDecorators.h" />
+    <ClInclude Include="Source\Game\Factories\CharacterFactory.h" />
+    <ClInclude Include="Source\Game\Factories\EvaluatorFactory.h" />
+    <ClInclude Include="Source\Game\Factories\NamePool.h" />
+    <ClInclude Include="Source\Game\Factories\SettlementFactory.h" />
+    <ClInclude Include="Source\Game\Factories\UnitFactory.h" />
+    <ClInclude Include="Source\Game\Map\MapData.h" />
+    <ClInclude Include="Source\Game\Map\MapLoader.h" />
+    <ClInclude Include="Source\Game\Map\Pathfinder.h" />
+    <ClInclude Include="Source\Game\Map\TerrainTypes.h" />
+    <ClInclude Include="Source\Game\Players\AIPlayer.h" />
+    <ClInclude Include="Source\Game\Players\HumanPlayer.h" />
+    <ClInclude Include="Source\Game\Players\IPlayer.h" />
+    <ClInclude Include="Source\Game\SaveGame.h" />
+    <ClInclude Include="Source\Game\Systems\BattleSystem.h" />
+    <ClInclude Include="Source\Game\Systems\CoverageSystem.h" />
+    <ClInclude Include="Source\Game\Systems\DiplomacySystem.h" />
+    <ClInclude Include="Source\Game\Systems\DynastySystem.h" />
+    <ClInclude Include="Source\Game\Systems\EconomySystem.h" />
+    <ClInclude Include="Source\Game\Systems\ForestrySystem.h" />
+    <ClInclude Include="Source\Game\Systems\MovementSystem.h" />
+    <ClInclude Include="Source\Game\Systems\PoliticsSystem.h" />
+    <ClInclude Include="Source\Game\Systems\PopulationSystem.h" />
+    <ClInclude Include="Source\Game\Systems\SettlementSystem.h" />
+    <ClInclude Include="Source\Game\Systems\Simulation.h" />
+    <ClInclude Include="Source\Game\WorldGenerator.h" />
+    <ClInclude Include="Source\Game\World\BuildingDatabase.h" />
+    <ClInclude Include="Source\Game\World\Character.h" />
+    <ClInclude Include="Source\Game\World\Clan.h" />
+    <ClInclude Include="Source\Game\World\Cohort.h" />
+    <ClInclude Include="Source\Game\World\EntityJson.h" />
+    <ClInclude Include="Source\Game\World\GameTime.h" />
+    <ClInclude Include="Source\Game\World\RaceDatabase.h" />
+    <ClInclude Include="Source\Game\World\ResourceData.h" />
+    <ClInclude Include="Source\Game\World\Settlement.h" />
+    <ClInclude Include="Source\Game\World\SettlementDatabase.h" />
+    <ClInclude Include="Source\Game\World\State.h" />
+    <ClInclude Include="Source\Game\World\Unit.h" />
+    <ClInclude Include="Source\Game\World\UnitDatabase.h" />
+    <ClInclude Include="Source\Game\World\World.h" />
+    <ClInclude Include="Source\Platform\Input.h" />
+    <ClInclude Include="Source\Platform\Window.h" />
+    <ClInclude Include="Source\Render\Camera.h" />
+    <ClInclude Include="Source\Render\FontAtlas.h" />
+    <ClInclude Include="Source\Render\Pipeline.h" />
+    <ClInclude Include="Source\Render\RenderTypes.h" />
+    <ClInclude Include="Source\Render\Renderer.h" />
+    <ClInclude Include="Source\Render\VulkanBuffer.h" />
+    <ClInclude Include="Source\Render\VulkanCommon.h" />
+    <ClInclude Include="Source\Render\VulkanDevice.h" />
+    <ClInclude Include="Source\Render\VulkanSwapchain.h" />
+    <ClInclude Include="Source\Scenes\EditorScene.h" />
+    <ClInclude Include="Source\Scenes\GameScene.h" />
+    <ClInclude Include="Source\Scenes\IScene.h" />
+    <ClInclude Include="Source\Scenes\MainMenuScene.h" />
+    <ClInclude Include="Source\Scenes\PartySetupScene.h" />
+    <ClInclude Include="Source\Scenes\SceneFactory.h" />
+    <ClInclude Include="Source\Scenes\SceneManager.h" />
+    <ClInclude Include="Source\Scenes\SettingsScene.h" />
+    <ClInclude Include="Source\UI\Theme.h" />
+    <ClInclude Include="Source\UI\UI.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

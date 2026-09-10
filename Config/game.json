@@ -1,0 +1,206 @@
+{
+  "window": {
+    "title": "World of Clans",
+    "width": 1600,
+    "height": 900,
+    "fullscreen": true
+  },
+
+  "render": {
+    "validation": false,
+    "vsync": true,
+    "forestTiling": 30.0,
+    "fieldTiling": 44.0,
+    "ownerTint": 0.22,
+    "borderWidth": 0.7,
+    "terrainMeshStep": 5,
+    "terrainSmoothPasses": 4,
+    "water": {
+      "mapColor": "00fff6",
+      "matchTolerance": 0.12,
+      "deepColor": "0b6d88",
+      "shallowColor": "1ad8cf",
+      "waveScale": 0.013,
+      "waveSpeed": 0.55,
+      "glint": 0.14,
+      "chop": 0.34,
+      "planeMargin": 8000.0
+    },
+    "labels": {
+      "minZoom": 1.3,
+      "scale": 0.95,
+      "offset": 6.0
+    },
+    "spriteScale": {
+      "settlement": 26.0,
+      "cohort": 20.0,
+      "quarry": 18.0,
+      "character": 16.0
+    }
+  },
+
+  "sprites": {
+    "file": "WoCVisual.png",
+    "tileSize": 16,
+    "order": [
+      "Human", "Elf", "Dwarf", "Cohort", "Village",
+      "City", "Castle", "Circle", "Forest", "Quarry", "Field"
+    ]
+  },
+
+  "camera": {
+    "pitchDegrees": 46.0,
+    "panSpeed": 900.0,
+    "edgeScrollMargin": 8,
+    "zoomStep": 1.12,
+    "rotateSpeed": 90.0,
+    "startZoom": 2.2,
+    "zoom": {
+      "min": 0.35,
+      "max": 5.0,
+      "default": 1.1
+    }
+  },
+
+  "ui": {
+    "font": "Consolas",
+    "fontPixelHeight": 15,
+    "scale": 1.0
+  },
+
+  "simulation": {
+    "daysPerSecond": 1.0,
+    "daysPerMonth": 30,
+    "monthsPerYear": 12,
+    "startYear": 912,
+    "speedSteps": [0.0, 0.5, 1.0, 2.0, 4.0, 8.0],
+    "defaultSpeedIndex": 2,
+    "economyTickDays": 30,
+    "populationTickDays": 30,
+    "forestryTickDays": 30,
+    "aiTickDays": 15
+  },
+
+  "coverage": {
+    "costPerUnit": 62.0,
+    "maxNodesPerSettlement": 90000,
+    "coreCost": 12.0,
+    "recomputeIntervalDays": 15,
+    "maskDownscale": 4,
+    "waterCoverageMultiplier": 4.0,
+    "fordableWaterMultiplier": 1.6,
+    "roadMultiplier": 0.45
+  },
+
+  "map": {
+    "fordableWaterRadius": 3,
+    "colorMatchTolerance": 24
+  },
+
+  "economy": {
+    "moneyPerCityPopulation": 0.0125,
+    "foodPerVillagePopulation": 0.02,
+    "foodPerFieldTile": 0.045,
+    "woodPerForestTile": 0.0035,
+    "stonePerQuarry": 1.6,
+    "caravanBonusPerRoadLink": 0.18,
+    "castleUpkeep": 4.0,
+    "cityUpkeep": 3.0,
+    "villageUpkeep": 0.5,
+    "cohortUpkeepPerUnit": 0.04,
+    "foodPerUnitPerMonth": 0.02,
+    "starvationLoyaltyPenalty": 0.05,
+    "treasuryDebtLoyaltyPenalty": 0.03,
+    "desertionRate": 0.35
+  },
+
+  "population": {
+    "baseGrowthRate": 0.012,
+    "prosperityGrowthFactor": 0.02,
+    "loyaltyGrowthFactor": 0.008,
+    "overcrowdingPenalty": 0.5,
+    "migrantsPerMonthFactor": 0.004,
+    "migrantsForNewVillage": 260,
+    "newVillageMinDistance": 90.0,
+    "newVillageMaxDistanceFromParent": 190.0,
+    "prosperityDrift": 0.01,
+    "loyaltyDrift": 0.012,
+    "loyaltyDistancePenalty": 0.00035,
+    "loyaltyForeignRacePenalty": 0.18,
+    "loyaltyForeignFaithPenalty": 0.12,
+    "revoltThreshold": 0.12,
+    "revoltCooldownDays": 720
+  },
+
+  "forestry": {
+    "villageHarvestPerMonth": 0.9,
+    "sawmillHarvestPerMonth": 4.5,
+    "regrowthPerMonth": 0.35,
+    "regrowthNeighbourThreshold": 0.25,
+    "fieldGrowthPerMonth": 0.6,
+    "fieldMaxRadius": 46.0,
+    "fieldRequiresSoil": 0.35
+  },
+
+  "movement": {
+    "baseSpeed": 14.0,
+    "roadSpeedMultiplier": 1.9,
+    "moraleRecoveryPerDay": 0.05,
+    "fatiguePerDay": 0.02
+  },
+
+  "battle": {
+    "roundsPerDay": 4,
+    "baseDamage": 0.06,
+    "terrainDefenseWeight": 0.6,
+    "heightAdvantagePerUnit": 0.012,
+    "moraleBreakThreshold": 0.22,
+    "moraleLossPerCasualty": 0.9,
+    "experiencePerRound": 0.004,
+    "experienceCap": 1.0,
+    "trainingWeight": 0.5,
+    "aristocratCommandBonus": 0.15,
+    "siegeWallWeight": 0.9,
+    "lootFraction": 0.35,
+    "razeProsperityLoss": 0.6
+  },
+
+  "diplomacy": {
+    "truceDays": 360,
+    "allianceOpinionThreshold": 45,
+    "warOpinionThreshold": -35,
+    "marriageOpinionGain": 30,
+    "nonAggressionOpinionGain": 15,
+    "opinionDriftPerMonth": 0.5,
+    "sameRaceOpinion": 12,
+    "sameFaithOpinion": 10,
+    "borderFrictionOpinion": -14
+  },
+
+  "characters": {
+    "comingOfAge": 16,
+    "marriageAge": 18,
+    "maxAge": 92,
+    "fertilityStart": 18,
+    "fertilityEnd": 45,
+    "childChancePerYear": 0.28,
+    "deathBaseChance": 0.004,
+    "deathAgeFactor": 0.0009
+  },
+
+  "ai": {
+    "aggression": 0.55,
+    "expansionWeight": 1.0,
+    "defenceWeight": 1.2,
+    "economyWeight": 0.9,
+    "minGarrisonUnits": 2,
+    "recruitTreasuryReserve": 120.0,
+    "raidDistanceLimit": 900.0
+  },
+
+  "clanColors": [
+    "c8452d", "2d6cc8", "3f9440", "b89020", "8b3fa8",
+    "2fa5a0", "c8622d", "6d6d9c", "9c2d5a", "4d7a2d",
+    "a86a2d", "2d8bc8", "7a2dc8", "c82d7a", "5c8f8f"
+  ]
+}

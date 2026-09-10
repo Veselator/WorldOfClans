@@ -1,0 +1,106 @@
+{
+  "cohort": {
+    "maxUnits": 10,
+    "maxCharactersPerUnit": 100,
+    "experienceGainPerBattle": 0.02,
+    "experienceCombatWeight": 0.35,
+    "baseMorale": 0.75,
+    "baseTraining": 0.35,
+    "trainingPerMonthInSettlement": 0.02
+  },
+
+  "roles": [
+    {
+      "id": "aristocrat",
+      "name": "Аристократ",
+      "single": true,
+      "description": "Одна людина знатного роду. Не б'ється в строю, але веде когорту: підіймає бойовий дух і вишкіл."
+    },
+    { "id": "swordsman",  "name": "Мечники",       "description": "Піший стрій зі щитом і мечем. Тримає удар і рубає стрільців." },
+    { "id": "archer",     "name": "Лучники",        "description": "Стрільці. Засипають кінноту стрілами, та безпорадні в ближньому бою." },
+    { "id": "cavalry",    "name": "Кіннота",        "description": "Важкий удар у лоб. Зминає піхоту, та в'язне під стрілами." },
+    { "id": "horseArcher","name": "Кінні лучники", "description": "Рухливі стрільці. Виснажують піхоту й уникають зіткнення." }
+  ],
+
+  "counters": {
+    "swordsman":   { "swordsman": 1.00, "archer": 1.40, "cavalry": 0.78, "horseArcher": 0.90 },
+    "archer":      { "swordsman": 0.75, "archer": 1.00, "cavalry": 1.35, "horseArcher": 1.10 },
+    "cavalry":     { "swordsman": 1.32, "archer": 0.80, "cavalry": 1.00, "horseArcher": 1.25 },
+    "horseArcher": { "swordsman": 1.15, "archer": 0.92, "cavalry": 0.80, "horseArcher": 1.00 },
+    "aristocrat":  { "swordsman": 0.40, "archer": 0.40, "cavalry": 0.40, "horseArcher": 0.40 }
+  },
+
+  "terrainAffinity": {
+    "comment": "Множник бойової сили на цьому типі місцевості",
+    "cavalry":     { "plain": 1.15, "plainRich": 1.15, "plainPoor": 1.10, "coast": 1.0, "hills": 0.85, "highland": 0.7 },
+    "horseArcher": { "plain": 1.18, "plainRich": 1.18, "plainPoor": 1.12, "coast": 1.0, "hills": 0.82, "highland": 0.68 },
+    "archer":      { "plain": 1.0, "plainRich": 1.0, "plainPoor": 1.0, "coast": 0.95, "hills": 1.15, "highland": 1.2 },
+    "swordsman":   { "plain": 1.0, "plainRich": 1.0, "plainPoor": 1.0, "coast": 1.0, "hills": 1.08, "highland": 1.12 },
+    "aristocrat":  { "plain": 1.0, "plainRich": 1.0, "plainPoor": 1.0, "coast": 1.0, "hills": 1.0, "highland": 1.0 }
+  },
+
+  "races": {
+    "human": {
+      "name": "Люди",
+      "units": [
+        { "role": "aristocrat",  "name": "Боярин",           "attack": 14, "defense": 12, "health": 26, "speed": 1.20, "range": 1, "recruitCost": 180, "upkeep": 1.20, "morale": 0.95, "commandBonus": 0.16 },
+        { "role": "swordsman",   "name": "Дружинник",        "attack": 10, "defense": 10, "health": 20, "speed": 1.00, "range": 1, "recruitCost": 22,  "upkeep": 0.16, "morale": 0.78 },
+        { "role": "archer",      "name": "Лучник",           "attack": 9,  "defense": 5,  "health": 15, "speed": 1.00, "range": 5, "recruitCost": 20,  "upkeep": 0.14, "morale": 0.70 },
+        { "role": "cavalry",     "name": "Гридень",          "attack": 13, "defense": 9,  "health": 24, "speed": 1.75, "range": 1, "recruitCost": 46,  "upkeep": 0.32, "morale": 0.82 },
+        { "role": "horseArcher", "name": "Кінний стрілець",   "attack": 10, "defense": 6,  "health": 18, "speed": 1.85, "range": 4, "recruitCost": 40,  "upkeep": 0.30, "morale": 0.76 }
+      ]
+    },
+    "elf": {
+      "name": "Ельфи",
+      "units": [
+        { "role": "aristocrat",  "name": "Владар гаю",     "attack": 15, "defense": 11, "health": 24, "speed": 1.30, "range": 1, "recruitCost": 210, "upkeep": 1.35, "morale": 1.00, "commandBonus": 0.20 },
+        { "role": "swordsman",   "name": "Клинок листа",     "attack": 10, "defense": 8,  "health": 17, "speed": 1.15, "range": 1, "recruitCost": 26,  "upkeep": 0.18, "morale": 0.82 },
+        { "role": "archer",      "name": "Довгий лук",       "attack": 13, "defense": 5,  "health": 14, "speed": 1.10, "range": 7, "recruitCost": 30,  "upkeep": 0.22, "morale": 0.80 },
+        { "role": "cavalry",     "name": "Вершник хащі",     "attack": 12, "defense": 8,  "health": 21, "speed": 1.90, "range": 1, "recruitCost": 52,  "upkeep": 0.36, "morale": 0.84 },
+        { "role": "horseArcher", "name": "Вітряний стрілець", "attack": 12, "defense": 5,  "health": 16, "speed": 2.00, "range": 5, "recruitCost": 50,  "upkeep": 0.34, "morale": 0.82 }
+      ]
+    },
+    "dwarf": {
+      "name": "Гноми",
+      "units": [
+        { "role": "aristocrat",  "name": "Тан",              "attack": 14, "defense": 16, "health": 32, "speed": 0.95, "range": 1, "recruitCost": 190, "upkeep": 1.25, "morale": 0.98, "commandBonus": 0.14 },
+        { "role": "swordsman",   "name": "Сокироносець",      "attack": 12, "defense": 13, "health": 26, "speed": 0.82, "range": 1, "recruitCost": 28,  "upkeep": 0.20, "morale": 0.88 },
+        { "role": "archer",      "name": "Арбалетник",       "attack": 12, "defense": 7,  "health": 18, "speed": 0.80, "range": 4, "recruitCost": 26,  "upkeep": 0.18, "morale": 0.78 },
+        { "role": "cavalry",     "name": "Козяча варта",  "attack": 11, "defense": 12, "health": 26, "speed": 1.40, "range": 1, "recruitCost": 48,  "upkeep": 0.34, "morale": 0.86 },
+        { "role": "horseArcher", "name": "Верховий стрілець", "attack": 9,  "defense": 8,  "health": 20, "speed": 1.45, "range": 3, "recruitCost": 44,  "upkeep": 0.32, "morale": 0.80 }
+      ]
+    }
+  },
+
+  "recruitment": {
+    "unitSizeByTier": {
+      "villageI": 30, "villageII": 45, "villageIII": 60,
+      "cityI": 70, "cityII": 85, "cityIII": 100,
+      "castleI": 80
+    },
+    "populationCostPerCharacter": 1.0,
+    "loyaltyCostPerUnit": 0.01,
+    "minLoyaltyToRecruit": 0.2
+  },
+
+  "characterTraits": [
+    { "id": "brave",     "name": "Хоробрий",      "morale": 0.08 },
+    { "id": "cautious",  "name": "Обережний",   "defense": 0.06 },
+    { "id": "brutal",    "name": "Жорстокий",     "attack": 0.08, "morale": -0.03 },
+    { "id": "disciplined","name": "Дисциплінований", "training": 0.10 },
+    { "id": "sickly",    "name": "Кволий",        "health": -0.10 },
+    { "id": "veteran",   "name": "Ветеран",      "attack": 0.05, "defense": 0.05 }
+  ],
+
+  "heightRange": {
+    "human": { "min": 158, "max": 194 },
+    "elf":   { "min": 168, "max": 202 },
+    "dwarf": { "min": 122, "max": 148 }
+  },
+  "weightFactor": {
+    "human": 0.42,
+    "elf":   0.36,
+    "dwarf": 0.62
+  },
+  "ageRange": { "min": 16, "max": 52 }
+}

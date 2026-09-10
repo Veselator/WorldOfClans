@@ -1,0 +1,79 @@
+{
+  "kinds": [
+    {
+      "id": "village",
+      "name": "Село",
+      "sprite": "Village",
+      "baseResource": "food",
+      "canBeIndependent": true,
+      "buildCost": { "money": 150, "wood": 60, "stone": 0, "food": 40 },
+      "buildDays": 60,
+      "tiers": [
+        { "tier": 1, "name": "Хутір",   "minPopulation": 0,    "maxPopulation": 400,  "coverage": 0.0,  "production": 1.0, "garrison": 1, "prosperityCap": 0.6 },
+        { "tier": 2, "name": "Сільце",    "minPopulation": 400,  "maxPopulation": 900,  "coverage": 0.0,  "production": 1.9, "garrison": 2, "prosperityCap": 0.8 },
+        { "tier": 3, "name": "Слобода", "minPopulation": 900,  "maxPopulation": 1800, "coverage": 0.0,  "production": 3.1, "garrison": 3, "prosperityCap": 1.0 }
+      ]
+    },
+    {
+      "id": "city",
+      "name": "Місто",
+      "sprite": "City",
+      "baseResource": "money",
+      "canBeIndependent": false,
+      "buildCost": { "money": 900, "wood": 320, "stone": 260, "food": 220 },
+      "buildDays": 240,
+      "tiers": [
+        { "tier": 1, "name": "Містечко",       "minPopulation": 0,    "maxPopulation": 2500,  "coverage": 1.00, "production": 1.0, "garrison": 4, "prosperityCap": 0.8 },
+        { "tier": 2, "name": "Місто",         "minPopulation": 2500, "maxPopulation": 6000,  "coverage": 1.25, "production": 2.2, "garrison": 6, "prosperityCap": 1.0 },
+        { "tier": 3, "name": "Стольний град", "minPopulation": 6000, "maxPopulation": 14000, "coverage": 1.50, "production": 3.8, "garrison": 9, "prosperityCap": 1.25 }
+      ]
+    },
+    {
+      "id": "castle",
+      "name": "Замок",
+      "sprite": "Castle",
+      "baseResource": "none",
+      "canBeIndependent": false,
+      "buildCost": { "money": 700, "wood": 200, "stone": 420, "food": 120 },
+      "buildDays": 180,
+      "tiers": [
+        { "tier": 1, "name": "Замок", "minPopulation": 0, "maxPopulation": 1200, "coverage": 0.75, "production": 0.0, "garrison": 8, "prosperityCap": 0.7 }
+      ]
+    }
+  ],
+
+  "defaults": {
+    "startingProsperity": 0.5,
+    "startingLoyalty": 0.75,
+    "defenseBase": 1.0,
+    "siegeSupplyDays": 90,
+    "minDistanceBetween": 70.0,
+    "minDistanceVillage": 46.0
+  },
+
+  "actions": {
+    "raid": {
+      "name": "Пограбувати",
+      "lootMoneyPerPopulation": 0.12,
+      "lootFoodPerPopulation": 0.05,
+      "prosperityLoss": 0.35,
+      "loyaltyLoss": 0.20,
+      "populationLoss": 0.10,
+      "opinionPenalty": -25
+    },
+    "raze": {
+      "name": "Знищити",
+      "requiresKind": ["village"],
+      "opinionPenalty": -45,
+      "lootMoneyPerPopulation": 0.2
+    },
+    "convert": {
+      "name": "Навернути до віри",
+      "usesRaceConfig": true
+    },
+    "grantIndependence": {
+      "name": "Відпустити",
+      "loyaltyRestored": 0.9
+    }
+  }
+}

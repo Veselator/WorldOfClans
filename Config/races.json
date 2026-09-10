@@ -1,0 +1,81 @@
+{
+  "races": [
+    {
+      "id": "human",
+      "name": "Люди",
+      "sprite": "Human",
+      "color": "d9c39a",
+      "faiths": ["perun", "christ"],
+      "defaultFaith": "perun",
+      "modifiers": {
+        "populationGrowth": 1.00,
+        "foodProduction": 1.00,
+        "moneyProduction": 1.05,
+        "woodProduction": 1.00,
+        "stoneProduction": 1.00,
+        "coverage": 1.00,
+        "loyalty": 1.00,
+        "recruitCost": 1.00
+      },
+      "preferredTerrain": ["plain", "plainRich", "coast"],
+      "description": "Орачі й купці. Швидко ростуть числом і легко ладнають із сусідами."
+    },
+    {
+      "id": "elf",
+      "name": "Ельфи",
+      "sprite": "Elf",
+      "color": "7fd98f",
+      "faiths": ["grove"],
+      "defaultFaith": "grove",
+      "modifiers": {
+        "populationGrowth": 0.72,
+        "foodProduction": 0.90,
+        "moneyProduction": 1.00,
+        "woodProduction": 1.45,
+        "stoneProduction": 0.70,
+        "coverage": 1.25,
+        "loyalty": 1.15,
+        "recruitCost": 1.20
+      },
+      "preferredTerrain": ["plainRich", "plain"],
+      "forestAffinity": 1.6,
+      "description": "Народ гаїв. Росте повільно, та землю тримає міцно й бачить далеко."
+    },
+    {
+      "id": "dwarf",
+      "name": "Гноми",
+      "sprite": "Dwarf",
+      "color": "d4a05c",
+      "faiths": ["forge"],
+      "defaultFaith": "forge",
+      "modifiers": {
+        "populationGrowth": 0.85,
+        "foodProduction": 0.80,
+        "moneyProduction": 1.15,
+        "woodProduction": 0.75,
+        "stoneProduction": 1.70,
+        "coverage": 0.85,
+        "loyalty": 1.20,
+        "recruitCost": 1.10
+      },
+      "preferredTerrain": ["hills", "highland"],
+      "hillAffinity": 1.5,
+      "description": "Гірський народ. Камінь і золото даються їм легко, хліб — важко."
+    }
+  ],
+
+  "faiths": [
+    { "id": "perun",  "name": "Віра Перуна", "color": "c8452d", "loyaltyBonus": 0.00, "moraleBonus": 0.05 },
+    { "id": "christ", "name": "Християнство", "color": "e6dfc8", "loyaltyBonus": 0.06, "moraleBonus": 0.00 },
+    { "id": "grove",  "name": "Віра гаю",   "color": "3f9440", "loyaltyBonus": 0.04, "moraleBonus": 0.02 },
+    { "id": "forge",  "name": "Віра горна",  "color": "b89020", "loyaltyBonus": 0.05, "moraleBonus": 0.03 }
+  ],
+
+  "conversion": {
+    "baseCost": 420.0,
+    "costPerPopulation": 0.9,
+    "durationDays": 120,
+    "loyaltyShock": 0.25,
+    "sameRaceDiscount": 0.7
+  }
+}

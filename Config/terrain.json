@@ -1,0 +1,117 @@
+{
+  "heightScale": 120.0,
+
+  "types": [
+    {
+      "id": "water",
+      "name": "Вода",
+      "color": "00fff6",
+      "passable": false,
+      "water": true,
+      "moveCost": 12.0,
+      "coverageCost": 8.0,
+      "soil": 0.0,
+      "defense": 0.7,
+      "stone": 0.0,
+      "buildable": false,
+      "heightFactor": 0.0
+    },
+    {
+      "id": "coast",
+      "name": "Узбережжя",
+      "color": "ffff00",
+      "passable": true,
+      "moveCost": 1.25,
+      "coverageCost": 1.15,
+      "soil": 0.45,
+      "defense": 0.9,
+      "stone": 0.1,
+      "buildable": true,
+      "heightFactor": 0.12
+    },
+    {
+      "id": "plainRich",
+      "name": "Чорнозем",
+      "color": "34c857",
+      "passable": true,
+      "moveCost": 1.0,
+      "coverageCost": 1.0,
+      "soil": 1.3,
+      "defense": 1.0,
+      "stone": 0.0,
+      "buildable": true,
+      "heightFactor": 0.35
+    },
+    {
+      "id": "plain",
+      "name": "Рівнина",
+      "color": "00ff00",
+      "passable": true,
+      "moveCost": 1.0,
+      "coverageCost": 1.0,
+      "soil": 1.0,
+      "defense": 1.0,
+      "stone": 0.0,
+      "buildable": true,
+      "heightFactor": 0.4
+    },
+    {
+      "id": "plainPoor",
+      "name": "Суглинок",
+      "color": "009700",
+      "passable": true,
+      "moveCost": 1.08,
+      "coverageCost": 1.05,
+      "soil": 0.7,
+      "defense": 1.05,
+      "stone": 0.1,
+      "buildable": true,
+      "heightFactor": 0.45
+    },
+    {
+      "id": "hills",
+      "name": "Пагорби",
+      "color": "a94c00",
+      "passable": true,
+      "moveCost": 1.85,
+      "coverageCost": 2.0,
+      "soil": 0.45,
+      "defense": 1.3,
+      "stone": 1.0,
+      "buildable": true,
+      "heightFactor": 0.75
+    },
+    {
+      "id": "highland",
+      "name": "Високогір'я",
+      "color": "662e00",
+      "passable": true,
+      "moveCost": 3.1,
+      "coverageCost": 3.6,
+      "soil": 0.15,
+      "defense": 1.55,
+      "stone": 1.6,
+      "buildable": true,
+      "heightFactor": 1.0
+    },
+    {
+      "id": "mountain",
+      "name": "Неприступні гори",
+      "color": "ffffff",
+      "passable": false,
+      "moveCost": 999.0,
+      "coverageCost": 999.0,
+      "soil": 0.0,
+      "defense": 2.0,
+      "stone": 2.2,
+      "buildable": false,
+      "heightFactor": 1.35
+    }
+  ],
+
+  "fordableWater": {
+    "moveCost": 4.5,
+    "coverageCost": 3.5,
+    "comment": "Вузькі річки можна перейти вбрід; широка вода блокує і рух, і покриття"
+  }
+}

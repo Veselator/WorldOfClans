@@ -1,0 +1,16 @@
+{
+  "name": "Острів Русь",
+  "description": "Тестовий острів: чорноземні рівнини посередині, пагорби й два гірські пасма, річки до узбережжя. Добрий для партії на 4-6 держав.",
+  "size": {
+    "width": 1920,
+    "height": 1080
+  },
+  "tilePixels": 4,
+  "heightScale": 42.0,
+  "seed": 20250910,
+  "layers": {
+    "terrain": "Terrain.png",
+    "height": "HeightMap.png",
+    "trees": "Trees.png"
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "comment": "Кожна будівля — декоратор над поселенням: вона обгортає розрахунок виробництва, оборони чи приросту.",
+
+  "buildings": [
+    {
+      "id": "fields",
+      "name": "Поля",
+      "description": "Зорана земля навколо села. Росте й сама, та лопата пришвидшує справу.",
+      "allowedKinds": ["village"],
+      "cost": { "money": 60, "wood": 20, "stone": 0, "food": 0 },
+      "buildDays": 30,
+      "decorator": "production",
+      "effect": { "resource": "food", "multiplier": 1.35, "flat": 0.0 },
+      "extra": { "fieldRadiusBonus": 18.0 }
+    },
+    {
+      "id": "granary",
+      "name": "Житниця",
+      "description": "Хліб не гниє і не пропадає в облозі.",
+      "allowedKinds": ["village", "city", "castle"],
+      "cost": { "money": 140, "wood": 90, "stone": 30, "food": 0 },
+      "buildDays": 45,
+      "decorator": "production",
+      "effect": { "resource": "food", "multiplier": 1.25, "flat": 1.0 },
+      "extra": { "siegeSupplyDays": 60 }
+    },
+    {
+      "id": "sawmill",
+      "name": "Лісопилка",
+      "description": "Рубає ліс швидко й складає колоди до скарбниці.",
+      "allowedKinds": ["village", "city", "castle"],
+      "requires": { "forestNearby": 0.08 },
+      "cost": { "money": 180, "wood": 40, "stone": 60, "food": 0 },
+      "buildDays": 50,
+      "decorator": "production",
+      "effect": { "resource": "wood", "multiplier": 1.0, "flat": 3.5 },
+      "extra": { "forestHarvest": 4.5 }
+    },
+    {
+      "id": "quarry",
+      "name": "Каменярня",
+      "description": "Освоює поклади каменю в пагорбах і горах поблизу.",
+      "allowedKinds": ["village", "city", "castle"],
+      "requires": { "stoneNearby": 0.5 },
+      "cost": { "money": 220, "wood": 120, "stone": 0, "food": 0 },
+      "buildDays": 60,
+      "decorator": "production",
+      "effect": { "resource": "stone", "multiplier": 1.0, "flat": 2.4 },
+      "extra": { "revealsQuarrySprite": true }
+    },
+    {
+      "id": "market",
+      "name": "Торжище",
+      "description": "Каравани йдуть до торгу, а срібло — слідом.",
+      "allowedKinds": ["city", "village"],
+      "cost": { "money": 300, "wood": 140, "stone": 90, "food": 0 },
+      "buildDays": 70,
+      "decorator": "production",
+      "effect": { "resource": "money", "multiplier": 1.30, "flat": 2.0 },
+      "extra": { "caravanBonus": 0.25 }
+    },
+    {
+      "id": "harbor",
+      "name": "Пристань",
+      "description": "Торгівля морем: дорожче будувати, зате більше зиску.",
+      "allowedKinds": ["city", "village"],
+      "requires": { "coastNearby": 0.05 },
+      "cost": { "money": 420, "wood": 260, "stone": 120, "food": 0 },
+      "buildDays": 90,
+      "decorator": "production",
+      "effect": { "resource": "money", "multiplier": 1.25, "flat": 4.0 }
+    },
+    {
+      "id": "palisade",
+      "name": "Тин",
+      "description": "Частокіл. Дешевий і кращий, ніж нічого.",
+      "allowedKinds": ["village", "castle", "city"],
+      "cost": { "money": 120, "wood": 160, "stone": 0, "food": 0 },
+      "buildDays": 35,
+      "decorator": "defense",
+      "effect": { "defenseMultiplier": 1.35 }
+    },
+    {
+      "id": "stoneWall",
+      "name": "Кам'яна стіна",
+      "description": "Стіна, об яку розбиваються приступи.",
+      "allowedKinds": ["city", "castle"],
+      "requiresBuilding": "palisade",
+      "cost": { "money": 560, "wood": 120, "stone": 480, "food": 0 },
+      "buildDays": 140,
+      "decorator": "defense",
+      "effect": { "defenseMultiplier": 2.10 }
+    },
+    {
+      "id": "barracks",
+      "name": "Казарми",
+      "description": "Новобранці приходять навченими.",
+      "allowedKinds": ["city", "castle"],
+      "cost": { "money": 320, "wood": 180, "stone": 140, "food": 0 },
+      "buildDays": 80,
+      "decorator": "military",
+      "effect": { "trainingBonus": 0.20, "recruitCostMultiplier": 0.90 }
+    },
+    {
+      "id": "stables",
+      "name": "Стайні",
+      "description": "Кінні загони дешевші й виходять швидше.",
+      "allowedKinds": ["city", "castle"],
+      "cost": { "money": 300, "wood": 200, "stone": 60, "food": 60 },
+      "buildDays": 75,
+      "decorator": "military",
+      "effect": { "cavalryCostMultiplier": 0.80, "moraleBonus": 0.04 }
+    },
+    {
+      "id": "temple",
+      "name": "Храм",
+      "description": "Тримає душі, а отже — і вірність.",
+      "allowedKinds": ["village", "city", "castle"],
+      "cost": { "money": 280, "wood": 120, "stone": 200, "food": 0 },
+      "buildDays": 90,
+      "decorator": "loyalty",
+      "effect": { "loyaltyPerMonth": 0.02, "conversionCostMultiplier": 0.75 }
+    },
+    {
+      "id": "court",
+      "name": "Двір намісника",
+      "description": "Управа на місці — менше приводів для бунту.",
+      "allowedKinds": ["city", "castle"],
+      "cost": { "money": 380, "wood": 160, "stone": 180, "food": 0 },
+      "buildDays": 100,
+      "decorator": "loyalty",
+      "effect": { "loyaltyPerMonth": 0.03, "distancePenaltyMultiplier": 0.6 }
+    },
+    {
+      "id": "roadHub",
+      "name": "Мощені дороги",
+      "description": "Дружина приходить вчасно, а каравани — частіше.",
+      "allowedKinds": ["city", "castle", "village"],
+      "cost": { "money": 260, "wood": 80, "stone": 240, "food": 0 },
+      "buildDays": 85,
+      "decorator": "coverage",
+      "effect": { "coverageMultiplier": 1.18, "caravanBonus": 0.15 }
+    },
+    {
+      "id": "watchtower",
+      "name": "Сторожова вежа",
+      "description": "Далі видно — далі сягає влада.",
+      "allowedKinds": ["castle", "city", "village"],
+      "cost": { "money": 200, "wood": 100, "stone": 160, "food": 0 },
+      "buildDays": 60,
+      "decorator": "coverage",
+      "effect": { "coverageMultiplier": 1.25 }
+    },
+    {
+      "id": "bridge",
+      "name": "Міст",
+      "description": "Пускає владу й військо через широку воду.",
+      "allowedKinds": ["city", "castle", "village"],
+      "requires": { "waterNearby": 0.05 },
+      "cost": { "money": 340, "wood": 220, "stone": 260, "food": 0 },
+      "buildDays": 110,
+      "decorator": "coverage",
+      "effect": { "coverageMultiplier": 1.0 },
+      "extra": { "bridgesWater": true, "bridgeRadius": 70.0 }
+    }
+  ],
+
+  "decoratorTypes": {
+    "production": "Обгортає розрахунок видобутку ресурсу",
+    "defense": "Обгортає оборонний множник під час облоги",
+    "military": "Обгортає найм і вишкіл когорт",
+    "loyalty": "Обгортає щомісячну зміну вірності",
+    "coverage": "Обгортає силу покриття поселення"
+  }
+}

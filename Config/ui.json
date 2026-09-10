@@ -1,0 +1,70 @@
+{
+  "palette": {
+    "background":      "0d1014",
+    "panel":           "161b22",
+    "panelAlt":        "1d242e",
+    "panelHeader":     "222c38",
+    "border":          "3a4652",
+    "borderStrong":    "5d6c7a",
+    "text":            "d8dee6",
+    "textDim":         "8b97a4",
+    "textStrong":      "ffffff",
+    "accent":          "c9a227",
+    "accentDim":       "8a7020",
+    "positive":        "5aa860",
+    "negative":        "c05046",
+    "warning":         "d2933a",
+    "selection":       "e4d08a",
+    "shadow":          "05070a"
+  },
+
+  "metrics": {
+    "padding": 8,
+    "rowHeight": 22,
+    "headerHeight": 26,
+    "buttonHeight": 26,
+    "sidebarWidth": 330,
+    "topBarHeight": 30,
+    "bottomBarHeight": 96,
+    "tooltipMaxWidth": 360,
+    "scrollSpeed": 48,
+    "borderThickness": 1
+  },
+
+  "labels": {
+    "money": "Срібло",
+    "wood": "Дерево",
+    "stone": "Камінь",
+    "food": "Їжа",
+    "population": "Населення",
+    "prosperity": "Процвітання",
+    "loyalty": "Вірність",
+    "race": "Народ",
+    "faith": "Віра",
+    "owner": "Власник",
+    "coverage": "Покриття",
+    "defense": "Оборона",
+    "garrison": "Гарнізон",
+    "experience": "Досвід",
+    "morale": "Дух",
+    "training": "Вишкіл",
+    "units": "Підрозділи",
+    "characters": "Люди",
+    "age": "Вік",
+    "height": "Зріст",
+    "weight": "Вага",
+    "origin": "Родом із",
+    "buildings": "Будівлі",
+    "actions": "Дії",
+    "cohorts": "Когорти",
+    "clans": "Роди",
+    "settlements": "Поселення",
+    "diplomacy": "Дипломатія"
+  },
+
+  "menu": {
+    "title": "WORLD OF CLANS",
+    "subtitle": "Хроніки Київської Русі X століття",
+    "items": ["Нова партія", "Завантажити гру", "Редактор карт", "Налаштування", "Вихід"]
+  }
+}

@@ -1,0 +1,474 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source">
+      <UniqueIdentifier>{1cee501b-bb5a-5cb0-8073-ea7e0370ccfb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Core">
+      <UniqueIdentifier>{e5c9088c-0838-52dc-8553-a047b3a69de9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game">
+      <UniqueIdentifier>{359e1b54-2d6a-5054-8e9e-32723fdf6d6c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game\Decorators">
+      <UniqueIdentifier>{032f4a54-114e-5fab-9b26-9719f941c4bd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game\Factories">
+      <UniqueIdentifier>{05135048-8bdf-583b-a1cc-3304e423638e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game\Map">
+      <UniqueIdentifier>{99fa1cc1-5601-5a96-8752-c77ffcbfe018}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game\Players">
+      <UniqueIdentifier>{7ea12105-5d24-5a7c-8026-2f07db6e754e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game\Systems">
+      <UniqueIdentifier>{3e207741-ed6a-550e-b129-8fdd3d74c5da}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Game\World">
+      <UniqueIdentifier>{eaf8789d-c917-58bd-be90-8a116c28957e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Platform">
+      <UniqueIdentifier>{5bbb670a-8913-529f-baf6-1bd260587aa4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Render">
+      <UniqueIdentifier>{d3b48f3a-b20b-57a1-ae6b-2543101a8013}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Scenes">
+      <UniqueIdentifier>{b53c2357-7a4e-5c35-bf92-c536e830f3f4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\UI">
+      <UniqueIdentifier>{b7a25a75-651d-5cd0-98f7-609b53b8801b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ThirdParty">
+      <UniqueIdentifier>{59727c09-211a-5a4a-a30c-f4985db400c0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ThirdParty\volk">
+      <UniqueIdentifier>{4586e720-1a6b-591b-abf2-7442c4057849}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\Application.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\Config.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\EventBus.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\ImageIO.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\Json.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\Log.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\Paths.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Core\Settings.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Decorators\SettlementDecorators.cpp">
+      <Filter>Source\Game\Decorators</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Factories\CharacterFactory.cpp">
+      <Filter>Source\Game\Factories</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Factories\EvaluatorFactory.cpp">
+      <Filter>Source\Game\Factories</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Factories\NamePool.cpp">
+      <Filter>Source\Game\Factories</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Factories\SettlementFactory.cpp">
+      <Filter>Source\Game\Factories</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Factories\UnitFactory.cpp">
+      <Filter>Source\Game\Factories</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Map\MapData.cpp">
+      <Filter>Source\Game\Map</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Map\MapLoader.cpp">
+      <Filter>Source\Game\Map</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Map\Pathfinder.cpp">
+      <Filter>Source\Game\Map</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Map\TerrainTypes.cpp">
+      <Filter>Source\Game\Map</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Players\AIPlayer.cpp">
+      <Filter>Source\Game\Players</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\SaveGame.cpp">
+      <Filter>Source\Game</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\BattleSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\CoverageSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\DiplomacySystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\DynastySystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\EconomySystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\ForestrySystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\MovementSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\PoliticsSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\PopulationSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\SettlementSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\Simulation.cpp">
+      <Filter>Source\Game\Systems</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\WorldGenerator.cpp">
+      <Filter>Source\Game</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\BuildingDatabase.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\Character.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\Clan.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\Cohort.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\GameTime.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\RaceDatabase.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\Settlement.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\SettlementDatabase.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\State.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\Unit.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\UnitDatabase.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\World\World.cpp">
+      <Filter>Source\Game\World</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Platform\Input.cpp">
+      <Filter>Source\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Platform\Window.cpp">
+      <Filter>Source\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\Camera.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\FontAtlas.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\Pipeline.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\Renderer.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\VulkanBuffer.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\VulkanDevice.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Render\VulkanSwapchain.cpp">
+      <Filter>Source\Render</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\EditorScene.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\EditorSceneUI.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\GameScene.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\GameSceneHud.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\MainMenuScene.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\PartySetupScene.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\SceneFactory.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\SceneManager.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\SettingsScene.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\UI\Theme.cpp">
+      <Filter>Source\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\UI\UI.cpp">
+      <Filter>Source\UI</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\main.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\volk\volk.c">
+      <Filter>ThirdParty\volk</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\Application.h">
+      <Filter>Source</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Config.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\EventBus.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\ImageIO.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Json.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Log.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Math.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Paths.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Random.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Settings.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Singleton.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Core\Types.h">
+      <Filter>Source\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Decorators\ISettlementEvaluator.h">
+      <Filter>Source\Game\Decorators</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Decorators\SettlementDecorators.h">
+      <Filter>Source\Game\Decorators</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Factories\CharacterFactory.h">
+      <Filter>Source\Game\Factories</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Factories\EvaluatorFactory.h">
+      <Filter>Source\Game\Factories</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Factories\NamePool.h">
+      <Filter>Source\Game\Factories</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Factories\SettlementFactory.h">
+      <Filter>Source\Game\Factories</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Factories\UnitFactory.h">
+      <Filter>Source\Game\Factories</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Map\MapData.h">
+      <Filter>Source\Game\Map</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Map\MapLoader.h">
+      <Filter>Source\Game\Map</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Map\Pathfinder.h">
+      <Filter>Source\Game\Map</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Map\TerrainTypes.h">
+      <Filter>Source\Game\Map</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Players\AIPlayer.h">
+      <Filter>Source\Game\Players</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Players\HumanPlayer.h">
+      <Filter>Source\Game\Players</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Players\IPlayer.h">
+      <Filter>Source\Game\Players</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\SaveGame.h">
+      <Filter>Source\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\BattleSystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\CoverageSystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\DiplomacySystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\DynastySystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\EconomySystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\ForestrySystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\MovementSystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\PoliticsSystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\PopulationSystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\SettlementSystem.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\Simulation.h">
+      <Filter>Source\Game\Systems</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\WorldGenerator.h">
+      <Filter>Source\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\BuildingDatabase.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\Character.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\Clan.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\Cohort.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\EntityJson.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\GameTime.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\RaceDatabase.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\ResourceData.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\Settlement.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\SettlementDatabase.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\State.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\Unit.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\UnitDatabase.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\World\World.h">
+      <Filter>Source\Game\World</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Platform\Input.h">
+      <Filter>Source\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Platform\Window.h">
+      <Filter>Source\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\Camera.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\FontAtlas.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\Pipeline.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\RenderTypes.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\Renderer.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\VulkanBuffer.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\VulkanCommon.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\VulkanDevice.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Render\VulkanSwapchain.h">
+      <Filter>Source\Render</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\EditorScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\GameScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\IScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\MainMenuScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\PartySetupScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\SceneFactory.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\SceneManager.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\SettingsScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\UI\Theme.h">
+      <Filter>Source\UI</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\UI\UI.h">
+      <Filter>Source\UI</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

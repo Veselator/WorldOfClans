@@ -1,0 +1,13 @@
+{
+  "cameraPitch": 46,
+  "defaultSpeedIndex": 2,
+  "edgeScroll": 8,
+  "fullscreen": true,
+  "labelMinZoom": 1.3,
+  "rotateSpeed": 90,
+  "showBorders": true,
+  "showLabels": true,
+  "vsync": true,
+  "windowHeight": 900,
+  "windowWidth": 1600
+}
