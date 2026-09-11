@@ -21,6 +21,8 @@ public class Drive {
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr extra);
  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, IntPtr extra);
+ [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+ [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
  [DllImport("user32.dll")] public static extern short VkKeyScanW(char c);
  public struct POINT { public int X, Y; }
  public static IntPtr Find(string wanted) {
@@ -38,6 +40,9 @@ public class Drive {
 
 $h = [Drive]::Find("WorldOfClansWindow")
 if ($h -eq [IntPtr]::Zero) { Write-Output "window not found"; exit 1 }
+# Keep the game above the terminal, or synthetic clicks land on whatever is covering it.
+[Drive]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0043) | Out-Null
+[Drive]::BringWindowToTop($h) | Out-Null
 [Drive]::SetForegroundWindow($h) | Out-Null
 Start-Sleep -Milliseconds 250
 

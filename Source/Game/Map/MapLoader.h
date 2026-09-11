@@ -20,6 +20,16 @@ namespace woc
     class MapLoader
     {
     public:
+        /// The map's baked portrait, written beside its layers when the map is saved and
+        /// read back wherever a small picture of the world is wanted. Returns false when the
+        /// map has none - an old map saved before portraits existed.
+        static bool LoadMinimap(const std::string& folder, ImageData& out);
+        /// Bakes the portrait and writes it into the map's folder.
+        static bool SaveMinimap(const std::string& folder, const MapData& map);
+        /// The portrait, baking and saving one first if the map has none. Maps written
+        /// before portraits existed pay for this once and are then as cheap as the rest.
+        static bool EnsureMinimap(const std::string& folder, ImageData& out);
+
         /// Reads Map.json only - used by the party set-up screen to list playable maps.
         static bool ReadDescription(const std::string& folder, MapDescription& out);
         static std::vector<MapDescription> ListMaps();

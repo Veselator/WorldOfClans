@@ -12,6 +12,7 @@ namespace woc
     namespace
     {
         constexpr const char* kMapFile = "Map.json";
+    constexpr const char* kMinimapFile = "Minimap.png";
 
         Json ReadMapJson(const std::string& folder)
         {
@@ -156,6 +157,40 @@ namespace woc
         return true;
     }
 
+    bool MapLoader::LoadMinimap(const std::string& folder, ImageData& out)
+    {
+        return LoadImage(Paths::Get().Map(folder, kMinimapFile), out, 4);
+    }
+
+    bool MapLoader::SaveMinimap(const std::string& folder, const MapData& map)
+    {
+        const ImageData portrait = map.BuildMinimapImage(
+            static_cast<u32>(ConfigManager::Get().Int("map/minimapWidth", 384)));
+        if (!portrait.IsValid()) return false;
+
+        const std::string directory = Paths::Get().MapsDirectory() + "/" + folder;
+        if (!Paths::EnsureDirectory(directory)) return false;
+        return SaveImagePNG(directory + "/" + kMinimapFile, portrait);
+    }
+
+    bool MapLoader::EnsureMinimap(const std::string& folder, ImageData& out)
+    {
+        if (LoadMinimap(folder, out)) return true;
+
+        // No portrait on disk. Read the map once, bake one, write it, and from here on this
+        // map costs a PNG load like any other.
+        MapData map;
+        MapDescription description;
+        if (!Load(folder, map, description)) return false;
+
+        SaveMinimap(folder, map);
+        if (LoadMinimap(folder, out)) return true;
+
+        out = map.BuildMinimapImage(
+            static_cast<u32>(ConfigManager::Get().Int("map/minimapWidth", 384)));
+        return out.IsValid();
+    }
+
     TerrainMesh MapLoader::BuildMesh(const MapData& map, u32 step)
     {
         TerrainMesh mesh;
@@ -176,8 +211,10 @@ namespace woc
         {
             for (u32 column = 0; column < columns; ++column)
             {
-                const f32 mapX = static_cast<f32>(std::min(column * step, map.PixelWidth() - 1));
-                const f32 mapY = static_cast<f32>(std::min(row * step, map.PixelHeight() - 1));
+                // Clamped to the map's full extent, not to its last pixel: a mesh that
+                // stopped a unit short left a sliver of bare sea along two edges.
+                const f32 mapX = static_cast<f32>(std::min(column * step, map.PixelWidth()));
+                const f32 mapY = static_cast<f32>(std::min(row * step, map.PixelHeight()));
                 const f32 height = heightAt(mapX, mapY);
 
                 TerrainVertex& vertex = mesh.vertices[static_cast<size_t>(row) * columns + column];
@@ -281,6 +318,10 @@ namespace woc
                 texel[3] = static_cast<u8>(Clamp01(tile.forest) * 255.0f + 0.5f);
             }
         }
+
+        // The portrait is baked here, once, with the rest of the map. Nothing at run time
+        // has to look at eight megabytes of colour layer to know what the world looks like.
+        SaveMinimap(folder, map);
 
         return SaveImagePNG(directory + "/HeightMap.png", heightImage) &&
                SaveImagePNG(directory + "/Trees.png", treeImage);

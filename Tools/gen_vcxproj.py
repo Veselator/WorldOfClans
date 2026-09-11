@@ -52,7 +52,7 @@ def configuration_block(config, platform):
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>gdi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>gdi32.lib;user32.lib;xaudio2.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>"$(ProjectDir)Tools\\compile_shaders.bat" "$(ProjectDir)"</Command>

@@ -20,6 +20,9 @@ namespace woc
 
         /// Pushes the current forest and field layers to the renderer.
         void UploadLayers(World& world);
+        /// Wipes ploughland off ground that cannot be ploughed. A map painted by hand, or
+        /// saved before the rule existed, may carry furrows across sand and hillside.
+        void ClearUnarableFields(World& world);
 
         bool LayersDirty() const { return m_layersDirty; }
 

@@ -31,7 +31,9 @@ namespace woc
         std::string faithId = "perun";    // can be converted, at a price
 
         i32 population = 200;
-        f32 prosperity = 0.5f;
+        /// Absolute wealth in grivnas, not a ratio. A hamlet sits near 60, a capital near 700;
+        /// the tier's ceiling is what turns it back into a fraction where the formulas want one.
+        f32 prosperity = 60.0f;
         f32 loyalty = 0.75f;
 
         std::vector<std::string> buildings;
@@ -54,12 +56,21 @@ namespace woc
         std::string TierName() const;
 
         bool IsIndependent() const { return owner == kInvalidId; }
+        /// What this tier can sustain, and how close the settlement is to it.
+        f32 ProsperityCeiling() const;
+        f32 ProsperityFraction() const;
         bool HasBuilding(const std::string& buildingId) const;
         bool IsBuilding(const std::string& buildingId) const;
 
         /// Base coverage from the tier table, before decorators.
         f32 BaseCoverage() const { return Tier().coverage; }
-        SpriteId Sprite() const { return KindInfo().sprite; }
+        /// The picture this settlement shows on the map: its tier's, if that tier has one
+        /// of its own, and the kind's otherwise.
+        SpriteId Sprite() const
+        {
+            const SpriteId tierSprite = Tier().sprite;
+            return tierSprite == SpriteId::Count ? KindInfo().sprite : tierSprite;
+        }
 
         Json ToJson() const;
         static Settlement FromJson(const Json& node);

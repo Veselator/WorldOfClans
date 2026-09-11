@@ -1,7 +1,10 @@
 #include "EditorScene.h"
 #include "SceneManager.h"
 
+#include "../Audio/AudioSystem.h"
 #include "../Core/Config.h"
+#include "../Game/Systems/RoadSystem.h"
+#include "../Core/Settings.h"
 #include "../Core/Log.h"
 #include "../Core/Paths.h"
 #include "../Core/Random.h"
@@ -69,24 +72,68 @@ namespace woc
     void EditorScene::OnEnter()
     {
         Renderer::Get().SetTerrainEnabled(true);
+        Renderer::Get().SetBordersVisible(true);   // the title screen leaves them off
+        Renderer::Get().SetFogEnabled(false);       // the designer sees the whole map
+        AudioSystem::Get().SetMood(MusicMood::Menu);
         Renderer::Get().SetClearColor(Color::FromRGB(0x05121a));
 
         NamePool::Get().Load();
         World::Get().Reset();
 
         m_maps = MapLoader::ListMaps();
-        if (!m_maps.empty())
-        {
-            LoadMap(m_maps.front().folder);
-        }
-        else
-        {
-            GenerateTerrain();
-        }
+        LoadThumbnails();
+
+        // The editor no longer decides for the designer which map he meant: it opens on the
+        // shelf and waits. Something has to be in the world meanwhile, so the first map is
+        // loaded behind the window - or bare terrain if there is nothing at all.
+        if (!m_maps.empty()) LoadMap(m_maps.front().folder);
+        else GenerateTerrain();
+
+        m_browserOpen = true;
+        m_browserScroll = 0.0f;
+    }
+
+    void EditorScene::ResizeMap()
+    {
+        World& world = World::Get();
+        MapData& map = world.MutableMap();
+
+        const u8 water = TerrainDatabase::Get().IndexOf("water");
+        map.Resize(static_cast<u32>(std::max(256, m_genWidth)),
+                   static_cast<u32>(std::max(256, m_genHeight)), water);
+
+        m_description.width = map.PixelWidth();
+        m_description.height = map.PixelHeight();
+        m_genWidth = static_cast<i32>(map.PixelWidth());
+        m_genHeight = static_cast<i32>(map.PixelHeight());
+
+        map.RebuildElevation(ConfigManager::Get().Int("render/terrainSmoothPasses", 4));
+        map.ComputeFordableWater(ConfigManager::Get().Int("map/fordableWaterRadius", 3));
+        RebuildColorLayer();
+        PushToRenderer(true);
+
+        m_message = "Розмір карти змінено";
+        m_messageTimer = 3.0f;
+    }
+
+    bool EditorScene::CreateMap()
+    {
+        if (m_newFolder.empty()) return false;
+
+        m_mapName = m_newName;
+        m_folderName = m_newFolder;
+        m_genWidth = std::max(256, m_newWidth);
+        m_genHeight = std::max(256, m_newHeight);
+
+        GenerateTerrain();
+        m_description.name = m_mapName;
+        m_browserOpen = false;
+        return true;
     }
 
     void EditorScene::OnExit()
     {
+        ReleaseThumbnails();
         World::Get().Reset();
     }
 
@@ -123,6 +170,14 @@ namespace woc
     {
         World& world = World::Get();
         world.Reset();
+
+        // A random seed is drawn here rather than typed, and then written back into the
+        // field: whatever the generator used is what the designer sees, and can keep.
+        if (m_randomSeed)
+        {
+            m_genSeed = GlobalRandom().Range(1, 2000000000);
+            m_seedText = std::to_string(m_genSeed);
+        }
 
         MapData& map = world.MutableMap();
         const u32 tilePixels = 4;
@@ -252,6 +307,8 @@ namespace woc
         renderer.SetTreeMask(map.BuildForestMask(), map.TileWidth(), map.TileHeight());
         renderer.SetFieldMask(map.BuildFieldMask(), map.TileWidth(), map.TileHeight());
         renderer.SetOwnerMask(map.BuildOwnerMask(), map.TileWidth(), map.TileHeight());
+        renderer.SetShoreMask(map.BuildShoreMask(ConfigManager::Get().Int("render/water/foamReach", 3)),
+                               map.TileWidth(), map.TileHeight());
 
         if (rebuildMesh)
         {
@@ -289,6 +346,7 @@ namespace woc
         }
 
         m_maps = MapLoader::ListMaps();
+        LoadThumbnails();
         m_message = "Збережено в Maps/" + m_folderName;
         m_messageTimer = 4.0f;
         return true;
@@ -324,21 +382,51 @@ namespace woc
                 case EditorTool::Terrain:
                     if (falloff > 0.35f)
                     {
+                        // Painting a terrain type paints a terrain type, and nothing else.
+                        // It used to drag the height up with it, which meant a designer
+                        // could not lay out a coastline without reshaping the ground.
                         tile.terrain = static_cast<u8>(m_terrainIndex);
                         const TerrainInfo& info = TerrainDatabase::Get().At(tile.terrain);
-                        // Keep elevation plausible for the painted terrain.
-                        tile.height = info.water ? 0.0f : std::max(tile.height, info.heightFactor * 0.8f);
+
+                        // Nothing here touches tile.height: that belongs to the height brush.
+                        // Water still clears what cannot grow in it, and needs the elevation
+                        // pass so the shoreline is re-flattened, but the painted height is
+                        // kept so land repainted here later comes back at its old level.
                         if (info.water) { tile.forest = 0.0f; tile.field = 0.0f; }
                         m_dirtyColor = true;
+                        m_dirtyHeight = true;
                     }
                     break;
+
+                case EditorTool::Height:
+                {
+                    if (TerrainDatabase::Get().At(tile.terrain).water) break;
+
+                    if (m_heightMode == HeightMode::Level)
+                    {
+                        // Towards the chosen height at the brush's strength, so a plateau
+                        // can be laid in a few passes rather than snapped in one.
+                        tile.height += (m_heightTarget - tile.height) * Clamp01(amount);
+                    }
+                    else
+                    {
+                        tile.height = Clamp01(tile.height + (erase ? -amount : amount) * 0.25f);
+                    }
+                    m_dirtyHeight = true;
+                    break;
+                }
 
                 case EditorTool::Forest:
                     tile.forest = Clamp01(tile.forest + (erase ? -amount : amount));
                     break;
 
                 case EditorTool::Field:
-                    tile.field = Clamp01(tile.field + (erase ? -amount : amount));
+                    // Only the plain soils take a plough; the brush will not paint sand,
+                    // hillside or highland however hard the designer scrubs at them.
+                    if (TerrainDatabase::Get().At(tile.terrain).arable || erase)
+                    {
+                        tile.field = Clamp01(tile.field + (erase ? -amount : amount));
+                    }
                     break;
 
                 case EditorTool::Road:
@@ -351,11 +439,80 @@ namespace woc
             }
         }
 
-        if (m_tool == EditorTool::Terrain)
+        // Smoothing the elevation and re-running the ford search are whole-map passes.
+        // Doing them inside the brush, every frame of a drag, is what made the editor
+        // crawl; they now happen once when the stroke pauses. See FlushEdits.
+        TouchRegion(center, span);
+    }
+
+    void EditorScene::TouchRegion(const Coord& center, i32 span)
+    {
+        const Coord low{ center.x - span - 1, center.y - span - 1 };
+        const Coord high{ center.x + span + 1, center.y + span + 1 };
+
+        if (m_dirtyMax.x < m_dirtyMin.x)
+        {
+            m_dirtyMin = low;
+            m_dirtyMax = high;
+            return;
+        }
+        m_dirtyMin = { std::min(m_dirtyMin.x, low.x), std::min(m_dirtyMin.y, low.y) };
+        m_dirtyMax = { std::max(m_dirtyMax.x, high.x), std::max(m_dirtyMax.y, high.y) };
+    }
+
+    void EditorScene::FlushEdits()
+    {
+        World& world = World::Get();
+        MapData& map = world.MutableMap();
+        Renderer& renderer = Renderer::Get();
+
+        if (m_dirtyHeight)
         {
             map.RebuildElevation(ConfigManager::Get().Int("render/terrainSmoothPasses", 4));
             map.ComputeFordableWater(ConfigManager::Get().Int("map/fordableWaterRadius", 3));
+            m_dirtyHeight = false;
         }
+
+        // Only the touched rectangle of the colour layer is re-rasterised. The full layer is
+        // 8 MB for a 1920x1080 map, and rewriting it for every brush stroke was pure waste.
+        if (m_dirtyColor && m_dirtyMax.x >= m_dirtyMin.x)
+        {
+            const i32 tilePixels = static_cast<i32>(map.TilePixels());
+            const i32 x0 = std::max(0, m_dirtyMin.x * tilePixels);
+            const i32 y0 = std::max(0, m_dirtyMin.y * tilePixels);
+            const i32 x1 = std::min(static_cast<i32>(map.PixelWidth()), (m_dirtyMax.x + 1) * tilePixels);
+            const i32 y1 = std::min(static_cast<i32>(map.PixelHeight()), (m_dirtyMax.y + 1) * tilePixels);
+
+            std::vector<u8>& pixels = map.ColorPixels();
+            for (i32 y = y0; y < y1; ++y)
+            {
+                for (i32 x = x0; x < x1; ++x)
+                {
+                    const Coord tile = map.ToTile({ static_cast<f32>(x), static_cast<f32>(y) });
+                    const u32 color = TerrainDatabase::Get().At(map.At(tile).terrain).color;
+                    u8* texel = pixels.data() + (static_cast<size_t>(y) * map.PixelWidth() + x) * 4;
+                    texel[0] = static_cast<u8>((color >> 16) & 0xFF);
+                    texel[1] = static_cast<u8>((color >> 8) & 0xFF);
+                    texel[2] = static_cast<u8>(color & 0xFF);
+                    texel[3] = 255;
+                }
+            }
+            renderer.SetTerrainColor(map.ColorPixels(), map.PixelWidth(), map.PixelHeight());
+            m_dirtyColor = false;
+        }
+
+        renderer.SetTreeMask(map.BuildForestMask(), map.TileWidth(), map.TileHeight());
+        renderer.SetFieldMask(map.BuildFieldMask(), map.TileWidth(), map.TileHeight());
+        renderer.SetShoreMask(map.BuildShoreMask(ConfigManager::Get().Int("render/water/foamReach", 3)),
+                               map.TileWidth(), map.TileHeight());
+        RoadSystem::Get().MarkDirty();
+        RoadSystem::Get().UploadLayer(world);
+
+        const u32 step = static_cast<u32>(ConfigManager::Get().Int("render/terrainMeshStep", 8));
+        renderer.SetTerrainMesh(MapLoader::BuildMesh(map, step));
+
+        m_dirtyMin = { 0, 0 };
+        m_dirtyMax = { -1, -1 };
     }
 
     void EditorScene::PlaceSettlement(const Vec2& mapPosition)
@@ -424,6 +581,16 @@ namespace woc
     void EditorScene::PlaceMine(const Vec2& mapPosition)
     {
         World& world = World::Get();
+
+        // The rock is under the hills and the highland; nobody sinks a quarry into a meadow.
+        const TerrainInfo& ground = world.Map().TerrainAtMap(mapPosition);
+        if (!ground.mineable || !ground.passable)
+        {
+            m_message = "Шахту можна закласти лише на пагорбах або в нагір'ї";
+            m_messageTimer = 3.0f;
+            return;
+        }
+
         MineSite& mine = world.CreateMine();
         mine.position = mapPosition;
         mine.resource = ResourceType::Stone;
@@ -474,6 +641,9 @@ namespace woc
         camera.SetViewport(viewport.x, viewport.y);
         if (ui.WantsKeyboard()) return;
 
+        // Panning is screen-relative, as in the game: W always means "up the screen",
+        // however far the map has been spun. Moving the focus along the raw map axes was
+        // what made the editor feel as though it were dragging sideways.
         const f32 panSpeed = config.Float("camera/panSpeed", 900.0f) / camera.Zoom();
         Vec2 pan;
         if (input.IsKeyDown(Key::A) || input.IsKeyDown(Key::Left)) pan.x -= 1.0f;
@@ -483,9 +653,31 @@ namespace woc
 
         if (pan.LengthSq() > 0.0f)
         {
-            camera.MoveFocus(pan.Normalized() * (panSpeed * deltaTime));
+            camera.PanScreenRelative(pan.Normalized() * (panSpeed * deltaTime));
             camera.ClampToBounds();
         }
+
+        // The cursor near an edge nudges the view, exactly as it does in a party.
+        const f32 margin = Settings::Get().edgeScroll;
+        if (margin > 0.0f && !ui.WantsMouse())
+        {
+            const Vec2 mouse = input.MousePosition();
+            Vec2 edge;
+            if (mouse.x < margin) edge.x -= 1.0f;
+            if (mouse.x > viewport.x - margin) edge.x += 1.0f;
+            if (mouse.y < margin) edge.y -= 1.0f;
+            if (mouse.y > viewport.y - margin) edge.y += 1.0f;
+            if (edge.LengthSq() > 0.0f)
+            {
+                camera.PanScreenRelative(edge.Normalized() * (panSpeed * deltaTime));
+                camera.ClampToBounds();
+            }
+        }
+
+        const f32 rotateSpeed = Settings::Get().rotateSpeed;
+        if (input.IsKeyDown(Key::Q)) camera.RotateBy(-rotateSpeed * deltaTime);
+        if (input.IsKeyDown(Key::E)) camera.RotateBy(rotateSpeed * deltaTime);
+        if (input.WasKeyPressed(Key::R)) camera.ResetRotation();
 
         const f32 wheel = input.WheelDelta();
         if (wheel != 0.0f && !ui.WantsMouse())
@@ -493,6 +685,22 @@ namespace woc
             const f32 step = config.Float("camera/zoomStep", 1.12f);
             camera.ZoomAt(wheel > 0.0f ? step : 1.0f / step, input.MousePosition());
         }
+    }
+
+    Vec2 EditorScene::ScreenToTerrain(const Vec2& screenPoint) const
+    {
+        // The brush must land where the cursor points on the *ground*, not where the ray
+        // crosses the water datum: at this camera angle a hill of any size throws the two
+        // apart by tens of map units, and the paint went in below the highlight.
+        const Camera& camera = Renderer::Get().GetCamera();
+        const MapData& map = World::Get().Map();
+
+        Vec2 position = camera.ScreenToMap(screenPoint, 0.0f);
+        for (int i = 0; i < 2; ++i)
+        {
+            position = camera.ScreenToMap(screenPoint, map.WorldHeightAtMap(position));
+        }
+        return position;
     }
 
     void EditorScene::Update(f32 deltaTime)
@@ -504,8 +712,7 @@ namespace woc
         UI& ui = UI::Get();
         if (ui.WantsMouse()) return;
 
-        Camera& camera = Renderer::Get().GetCamera();
-        const Vec2 mapPosition = camera.ScreenToMap(input.MousePosition());
+        const Vec2 mapPosition = ScreenToTerrain(input.MousePosition());
 
         const bool painting = input.IsMouseDown(MouseButton::Left);
         const bool erasing = input.IsMouseDown(MouseButton::Right);
@@ -516,6 +723,14 @@ namespace woc
         case EditorTool::Forest:
         case EditorTool::Field:
         case EditorTool::Road:
+            if (painting || erasing)
+            {
+                ApplyBrush(mapPosition, erasing);
+                m_meshRefreshTimer = 0.25f;
+            }
+            break;
+
+        case EditorTool::Height:
             if (painting || erasing)
             {
                 ApplyBrush(mapPosition, erasing);
@@ -551,31 +766,239 @@ namespace woc
             break;
         }
 
-        // Repainting the whole colour layer every frame would stall; do it when the
-        // brush pauses instead.
+        // Every heavy pass - smoothing, the ford search, the colour layer, the mesh - waits
+        // for the stroke to pause. Painting stays at frame rate; the catch-up costs one hitch
+        // a quarter second after the brush lifts.
         if (m_meshRefreshTimer > 0.0f)
         {
             m_meshRefreshTimer -= deltaTime;
-            if (m_meshRefreshTimer <= 0.0f)
-            {
-                if (m_dirtyColor) RebuildColorLayer();
-                PushToRenderer(true);
-            }
+            if (m_meshRefreshTimer <= 0.0f) FlushEdits();
         }
 
         if (CoverageSystem::Get().IsDirty())
         {
-            CoverageSystem::Get().Recompute(World::Get());
+            CoverageSystem::Get().RecomputeBlocking(World::Get());
         }
 
-        if (input.WasKeyPressed(Key::Escape)) SceneManager::Get().Request(SceneId::MainMenu);
+        if (input.WasKeyPressed(Key::Escape) && !UI::Get().WantsKeyboard())
+        {
+            // One step at a time, same as in the game. Escape never throws away an unsaved
+            // map: the way out of the editor is the button in the browser.
+            if (m_browserOpen)
+            {
+                // Nothing open behind it means there is nowhere to go back to.
+                if (World::Get().Map().IsValid()) m_browserOpen = false;
+                else SceneManager::Get().RequestBack();
+            }
+            else if (m_inspected != kInvalidId)
+            {
+                m_inspected = kInvalidId;
+            }
+            else
+            {
+                m_browserOpen = true;
+                m_browserScroll = 0.0f;
+            }
+        }
+    }
+
+    void EditorScene::DrawMapBounds()
+    {
+        Renderer& renderer = Renderer::Get();
+        const Camera& camera = renderer.GetCamera();
+        const MapData& map = World::Get().Map();
+        if (!map.IsValid()) return;
+
+        // The edge of the world, drawn as a dashed white line that stands on the ground it
+        // crosses rather than floating over it: the designer needs to see where the map
+        // stops even where the coast does not.
+        const f32 w = static_cast<f32>(map.PixelWidth());
+        const f32 h = static_cast<f32>(map.PixelHeight());
+        const Vec2 corners[4] = { { 0.0f, 0.0f }, { w, 0.0f }, { w, h }, { 0.0f, h } };
+
+        const f32 step = ConfigManager::Get().Float("editor/boundsDashStep", 48.0f);
+        const f32 thickness = ConfigManager::Get().Float("editor/boundsThickness", 1.6f);
+
+        for (int edge = 0; edge < 4; ++edge)
+        {
+            const Vec2 from = corners[edge];
+            const Vec2 to = corners[(edge + 1) % 4];
+            const f32 length = Distance(from, to);
+            const i32 segments = std::max(2, static_cast<i32>(length / step));
+
+            // Every other segment is drawn: that is what makes it a dashed line, and the
+            // gaps are what let the coastline underneath still read.
+            for (i32 i = 0; i < segments; i += 2)
+            {
+                const f32 t0 = static_cast<f32>(i) / static_cast<f32>(segments);
+                const f32 t1 = static_cast<f32>(i + 1) / static_cast<f32>(segments);
+
+                const Vec2 a{ from.x + (to.x - from.x) * t0, from.y + (to.y - from.y) * t0 };
+                const Vec2 b{ from.x + (to.x - from.x) * t1, from.y + (to.y - from.y) * t1 };
+
+                renderer.UILine(camera.MapToScreen(a, map.WorldHeightAtMap(a)),
+                                camera.MapToScreen(b, map.WorldHeightAtMap(b)),
+                                Color(1.0f, 1.0f, 1.0f, 0.85f), thickness);
+            }
+        }
+    }
+
+    void EditorScene::LoadThumbnails()
+    {
+        ReleaseThumbnails();
+        m_thumbnails.assign(m_maps.size(), 0);
+
+        for (size_t i = 0; i < m_maps.size(); ++i)
+        {
+            ImageData portrait;
+            if (!MapLoader::EnsureMinimap(m_maps[i].folder, portrait)) continue;
+            m_thumbnails[i] = Renderer::Get().CreateUITexture(portrait.pixels, portrait.width, portrait.height);
+        }
+    }
+
+    void EditorScene::ReleaseThumbnails()
+    {
+        for (u32 handle : m_thumbnails) Renderer::Get().ReleaseUITexture(handle);
+        m_thumbnails.clear();
+    }
+
+    void EditorScene::DrawMapBrowser()
+    {
+        if (!m_browserOpen) return;
+
+        Renderer& renderer = Renderer::Get();
+        UI& ui = UI::Get();
+        const Theme& theme = Theme::Get();
+        const Vec2 viewport = renderer.ViewportSize();
+
+        renderer.UIRect({ 0.0f, 0.0f, viewport.x, viewport.y }, theme.shadow.WithAlpha(0.72f));
+
+        const f32 width = 620.0f;
+        const f32 height = 560.0f;
+        const Rect panel{ (viewport.x - width) * 0.5f, (viewport.y - height) * 0.5f, width, height };
+        ui.Panel(panel, "Карти");
+
+        const f32 innerX = panel.x + theme.padding * 2.0f;
+        const f32 innerW = panel.w - theme.padding * 4.0f;
+        f32 y = panel.y + theme.headerHeight + theme.padding;
+
+        auto row = [&](f32 rowHeight)
+        {
+            const Rect r{ innerX, y, innerW, rowHeight };
+            y += rowHeight + 5.0f;
+            return r;
+        };
+
+        // --- what already exists ------------------------------------------------------------
+        ui.Label(row(20.0f), "ВІДКРИТИ", theme.accent);
+
+        const f32 listHeight = 210.0f;
+        const Rect listArea{ innerX, y, innerW, listHeight };
+        y += listHeight + 10.0f;
+
+        const f32 entryHeight = 58.0f;
+        const Rect content = ui.BeginScroll(listArea, m_maps.size() * entryHeight, m_browserScroll);
+        if (m_maps.empty())
+        {
+            ui.LabelCentered({ content.x, content.y + 12.0f, content.w, 22.0f },
+                             "Жодної карти ще немає", theme.textDim);
+        }
+        for (size_t i = 0; i < m_maps.size(); ++i)
+        {
+            const Rect r{ content.x, content.y + i * entryHeight, content.w, entryHeight - 4.0f };
+            const bool current = m_maps[i].folder == m_folderName;
+            if (ui.ListItem(r, "", current))
+            {
+                if (LoadMap(m_maps[i].folder)) m_browserOpen = false;
+            }
+
+            // The map's own portrait, kept in proportion inside a fixed frame.
+            const Rect frame{ r.x + 5.0f, r.y + 4.0f, 78.0f, r.h - 8.0f };
+            renderer.UIRect(frame, theme.panelAlt);
+            const u32 thumbnail = i < m_thumbnails.size() ? m_thumbnails[i] : 0;
+            if (thumbnail != 0 && m_maps[i].width > 0 && m_maps[i].height > 0)
+            {
+                const f32 want = static_cast<f32>(m_maps[i].width) / static_cast<f32>(m_maps[i].height);
+                f32 w = frame.w;
+                f32 h = w / want;
+                if (h > frame.h) { h = frame.h; w = h * want; }
+                renderer.UIImage(thumbnail,
+                                 { frame.x + (frame.w - w) * 0.5f, frame.y + (frame.h - h) * 0.5f, w, h },
+                                 Color(1.0f, 1.0f, 1.0f, 1.0f));
+            }
+
+            renderer.UIText(m_maps[i].name, { frame.Right() + 10.0f, r.y + 8.0f },
+                            current ? theme.accent : theme.textStrong);
+
+            char size[48];
+            std::snprintf(size, sizeof(size), "%u x %u", m_maps[i].width, m_maps[i].height);
+            renderer.UIText(size, { frame.Right() + 10.0f, r.y + 28.0f }, theme.textDim, 0.9f);
+        }
+        ui.EndScroll(content.y + m_maps.size() * entryHeight);
+
+        // --- or something new ----------------------------------------------------------------
+        renderer.UIRect({ innerX, y, innerW, 1.0f }, theme.border);
+        y += 10.0f;
+        ui.Label(row(20.0f), "НОВА КАРТА", theme.accent);
+
+        {
+            const Rect r = row(24.0f);
+            ui.Label({ r.x, r.y, 110.0f, r.h }, "Назва", theme.textDim);
+            ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "newMapName", m_newName, 40);
+        }
+        {
+            const Rect r = row(24.0f);
+            ui.Label({ r.x, r.y, 110.0f, r.h }, "Тека", theme.textDim);
+            ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "newMapFolder", m_newFolder, 32);
+        }
+        {
+            // A free size, not a menu of three: the map is whatever the designer needs.
+            const Rect r = row(24.0f);
+            const f32 halfWidth = (r.w - 12.0f) * 0.5f;
+            ui.Stepper({ r.x, r.y, halfWidth, r.h }, "Ширина", m_newWidth, 256, 8192);
+            ui.Stepper({ r.x + halfWidth + 12.0f, r.y, halfWidth, r.h }, "Висота", m_newHeight, 256, 8192);
+        }
+        {
+            const Rect r = row(18.0f);
+            char note[96];
+            std::snprintf(note, sizeof(note), "Сітка симуляції: %d x %d клітин",
+                          m_newWidth / 4, m_newHeight / 4);
+            ui.Label(r, note, theme.textDim);
+        }
+
+        if (ui.Button(row(30.0f), "Створити карту")) CreateMap();
+
+        // --- and the way out ------------------------------------------------------------------
+        const f32 buttonY = panel.Bottom() - 44.0f;
+        const f32 buttonWidth = (innerW - 12.0f) * 0.5f;
+        if (ui.Button({ innerX, buttonY, buttonWidth, 30.0f }, "Продовжити редагування",
+                      !m_maps.empty() || World::Get().Map().IsValid()))
+        {
+            m_browserOpen = false;
+        }
+        if (ui.Button({ innerX + buttonWidth + 12.0f, buttonY, buttonWidth, 30.0f }, "У меню"))
+        {
+            SceneManager::Get().RequestBack();
+        }
     }
 
     void EditorScene::Render()
     {
+        // The browser is modal: nothing behind it answers the mouse while it is up.
+        if (m_browserOpen)
+        {
+            const Vec2 viewport = Renderer::Get().ViewportSize();
+            const f32 width = 620.0f;
+            const f32 height = 560.0f;
+            UI::Get().SetModalRegion({ (viewport.x - width) * 0.5f, (viewport.y - height) * 0.5f,
+                                       width, height });
+        }
+
         DrawObjects();
+        DrawMapBounds();
         DrawToolbar();
         DrawInspector();
+        DrawMapBrowser();
 
         if (m_messageTimer > 0.0f && !m_message.empty())
         {
@@ -622,7 +1045,7 @@ namespace woc
         // Brush outline follows the cursor so the radius is never a guess.
         if (!UI::Get().WantsMouse())
         {
-            const Vec2 mapPosition = renderer.GetCamera().ScreenToMap(Input::Get().MousePosition());
+            const Vec2 mapPosition = ScreenToTerrain(Input::Get().MousePosition());
             renderer.DrawSprite(SpriteId::Circle, mapPosition, map.WorldHeightAtMap(mapPosition),
                                 static_cast<f32>(m_brushRadius) * 2.0f,
                                 Theme::Get().accent.WithAlpha(0.25f), 0.5f);

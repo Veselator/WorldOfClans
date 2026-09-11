@@ -29,6 +29,8 @@ namespace woc
             m_settings.mapFolder = m_maps[0].folder;
         }
 
+        LoadThumbnails();
+
         m_palette.clear();
         for (const Json& entry : ConfigManager::Get().Game()["clanColors"].AsArray())
         {
@@ -102,7 +104,7 @@ namespace woc
         const Rect back{ margin, viewport.y - 54.0f, 180.0f, 34.0f };
         if (ui.Button(back, "Назад"))
         {
-            SceneManager::Get().Request(SceneId::MainMenu);
+            SceneManager::Get().RequestBack();
         }
 
         const Rect start{ viewport.x - margin - 240.0f, viewport.y - 54.0f, 240.0f, 34.0f };
@@ -129,6 +131,30 @@ namespace woc
         }
     }
 
+    void PartySetupScene::LoadThumbnails()
+    {
+        ReleaseThumbnails();
+        m_thumbnails.assign(m_maps.size(), 0);
+
+        for (size_t i = 0; i < m_maps.size(); ++i)
+        {
+            ImageData portrait;
+            if (!MapLoader::EnsureMinimap(m_maps[i].folder, portrait)) continue;
+            m_thumbnails[i] = Renderer::Get().CreateUITexture(portrait.pixels, portrait.width, portrait.height);
+        }
+    }
+
+    void PartySetupScene::ReleaseThumbnails()
+    {
+        for (u32 handle : m_thumbnails) Renderer::Get().ReleaseUITexture(handle);
+        m_thumbnails.clear();
+    }
+
+    void PartySetupScene::OnExit()
+    {
+        ReleaseThumbnails();
+    }
+
     void PartySetupScene::RenderMapList(const Rect& area)
     {
         UI& ui = UI::Get();
@@ -138,20 +164,41 @@ namespace woc
         const Rect body = Rect{ area.x, area.y + theme.headerHeight, area.w, area.h - theme.headerHeight }
                               .Inset(theme.padding);
 
-        const f32 rowHeight = 46.0f;
+        // Tall rows, because each one carries the map's portrait: a name and a pixel count
+        // say nothing about whether a world is an archipelago or one great plain.
+        const f32 rowHeight = 92.0f;
         const Rect content = ui.BeginScroll(body, m_maps.size() * rowHeight, m_mapScroll);
 
         for (size_t i = 0; i < m_maps.size(); ++i)
         {
-            const Rect row{ content.x, content.y + i * rowHeight, content.w, rowHeight - 4.0f };
+            const Rect row{ content.x, content.y + i * rowHeight, content.w, rowHeight - 6.0f };
             const bool selected = static_cast<i32>(i) == m_selectedMap;
-            if (ui.ListItem(row, m_maps[i].name, selected))
+            if (ui.ListItem(row, "", selected))
             {
                 m_selectedMap = static_cast<i32>(i);
                 m_settings.mapFolder = m_maps[i].folder;
             }
+
+            // The portrait keeps the map's own proportions inside a fixed frame.
+            const Rect frame{ row.x + 6.0f, row.y + 6.0f, 118.0f, row.h - 12.0f };
+            Renderer::Get().UIRect(frame, theme.panelAlt);
+            const u32 thumbnail = i < m_thumbnails.size() ? m_thumbnails[i] : 0;
+            if (thumbnail != 0 && m_maps[i].width > 0 && m_maps[i].height > 0)
+            {
+                const f32 want = static_cast<f32>(m_maps[i].width) / static_cast<f32>(m_maps[i].height);
+                f32 w = frame.w;
+                f32 h = w / want;
+                if (h > frame.h) { h = frame.h; w = h * want; }
+                Renderer::Get().UIImage(thumbnail,
+                                        { frame.x + (frame.w - w) * 0.5f, frame.y + (frame.h - h) * 0.5f, w, h },
+                                        Color(1.0f, 1.0f, 1.0f, 1.0f));
+            }
+
+            const f32 textX = frame.Right() + 10.0f;
+            Renderer::Get().UIText(m_maps[i].name, { textX, row.y + 12.0f },
+                                   selected ? theme.accent : theme.textStrong);
             const std::string size = std::to_string(m_maps[i].width) + "x" + std::to_string(m_maps[i].height);
-            ui.LabelRight({ row.x, row.y, row.w - theme.padding, row.h }, size, theme.textDim);
+            Renderer::Get().UIText(size, { textX, row.y + 34.0f }, theme.textDim, 0.9f);
 
             if (!m_maps[i].description.empty()) ui.TooltipIfHovered(row, m_maps[i].description);
         }
@@ -199,6 +246,14 @@ namespace woc
         y += 26.0f;
 
         ui.Toggle({ innerX, y, innerW, 26.0f }, "Випадкові народи в суперників", m_settings.randomiseRaces);
+        y += 30.0f;
+
+        const Rect fogRow{ innerX, y, innerW, 26.0f };
+        ui.Toggle(fogRow, "Туман війни", m_settings.fogOfWar);
+        ui.TooltipIfHovered(fogRow,
+            "Видно лише те, що бачать ваші люди.\n"
+            "Пройдена земля лишається такою, якою ви її бачили востаннє,\n"
+            "а куди ви не заходили - там самий туман.");
         y += 34.0f;
 
         renderer.UIRect({ innerX, y, innerW, 1.0f }, theme.border);

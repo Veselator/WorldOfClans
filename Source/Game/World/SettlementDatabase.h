@@ -13,6 +13,9 @@ namespace woc
     {
         i32 tier = 1;
         std::string name;
+        /// What this tier looks like on the map. Left unset in the config, the kind's own
+        /// sprite stands for it, which is what the first tier of everything does.
+        SpriteId sprite = SpriteId::Count;
         i32 minPopulation = 0;
         i32 maxPopulation = 1000;
         f32 coverage = 0.0f;
@@ -32,6 +35,12 @@ namespace woc
         bool canBeIndependent = true;
         ResourceData buildCost;
         i32 buildDays = 60;
+        /// How many people a newly founded seat of this kind gathers from the holdings
+        /// around it. Nobody appears out of thin air: these are somebody else's subjects,
+        /// packed up and sent out to the new site.
+        i32 settlers = 200;
+        /// How far the call for settlers carries, in map units.
+        f32 settlerRange = 500.0f;
         std::vector<SettlementTier> tiers;
 
         /// Tier index (0-based) matching a population figure.

@@ -37,7 +37,7 @@ namespace woc
         if (m_statusTimer > 0.0f) m_statusTimer -= deltaTime;
         if (Input::Get().WasKeyPressed(Key::Escape) && !UI::Get().WantsKeyboard())
         {
-            SceneManager::Get().Request(SceneId::MainMenu);
+            SceneManager::Get().RequestBack();
         }
     }
 
@@ -66,7 +66,7 @@ namespace woc
         const Rect back{ margin, viewport.y - 54.0f, 200.0f, 34.0f };
         if (ui.Button(back, "Назад"))
         {
-            SceneManager::Get().Request(SceneId::MainMenu);
+            SceneManager::Get().RequestBack();
         }
 
         if (m_statusTimer > 0.0f && !m_status.empty())
@@ -139,10 +139,24 @@ namespace woc
             Renderer::Get().SetBordersVisible(borders);
         }
 
+        bool fps = settings.showFps;
+        if (ui.Toggle(row(26.0f), "Показувати FPS", fps)) settings.showFps = fps;
+
         bool labels = settings.showLabels;
         if (ui.Toggle(row(26.0f), "Назви поселень", labels)) settings.showLabels = labels;
 
         ui.Slider(row(26.0f), "Масштаб для назв", settings.labelMinZoom, 0.5f, 3.5f);
+
+        // The interface's own size. Applied on "Застосувати" rather than as the handle
+        // moves: every panel on this very screen is laid out from these metrics, and
+        // resizing them mid-frame would drag the slider out from under the cursor.
+        y += 6.0f;
+        ui.Slider(row(26.0f), "Масштаб інтерфейсу", settings.uiScale, 0.75f, 1.75f);
+        {
+            char scaleText[32];
+            std::snprintf(scaleText, sizeof(scaleText), "%.0f%%", settings.uiScale * 100.0f);
+            ui.LabelRight(row(18.0f), scaleText, theme.textDim);
+        }
 
         y += 6.0f;
         if (ui.Button(row(30.0f), "Застосувати"))
@@ -174,14 +188,8 @@ namespace woc
             return r;
         };
 
-        if (ui.Slider(row(26.0f), "Нахил камери", settings.cameraPitch, 25.0f, 75.0f))
-        {
-            Camera& camera = renderer.GetCamera();
-            camera.Configure(settings.cameraPitch, camera.MinZoom(), camera.MaxZoom(), camera.Zoom());
-        }
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%.0f°", settings.cameraPitch);
-        ui.LabelRight(row(18.0f), buffer, theme.textDim);
+        // The camera's tilt is not here on purpose: the whole map is drawn around one
+        // angle, and the only thing letting it be dragged about achieves is breaking it.
 
         ui.Slider(row(26.0f), "Швидкість обертання", settings.rotateSpeed, 20.0f, 220.0f);
         ui.Slider(row(26.0f), "Прокрутка від краю", settings.edgeScroll, 0.0f, 30.0f);

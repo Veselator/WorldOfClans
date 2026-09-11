@@ -28,6 +28,10 @@ namespace woc
 
         if (m_current)
         {
+            // Remembered before the screen is torn down, and only when we are actually
+            // going somewhere else: re-entering the same screen would otherwise erase
+            // the trail back.
+            if (m_current->Id() != m_pending) m_previous = m_current->Id();
             m_current->OnExit();
             m_current.reset();
         }

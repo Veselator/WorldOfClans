@@ -21,6 +21,12 @@ namespace woc
         f32 moveCost = 1.0f;
         f32 coverageCost = 1.0f;
         f32 soil = 1.0f;
+        /// Whether a plough can be put to this ground at all. Sand, hillside and highland
+        /// carry some soil value for other purposes, but no village tills them.
+        bool arable = false;
+        /// Whether a quarry can be sunk here. Rock lies under the hills and the highland;
+        /// the bare peaks have plenty of it and no way in.
+        bool mineable = false;
         f32 defense = 1.0f;
         f32 stone = 0.0f;
         f32 heightFactor = 0.5f;

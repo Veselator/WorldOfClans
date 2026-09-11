@@ -29,6 +29,8 @@ namespace woc
         void UpdateProsperity(World& world, Settlement& settlement);
         void UpdateLoyalty(World& world, Settlement& settlement);
         void HandleRevolts(World& world);
+        /// The odds this settlement throws off its lord within a month, 0..1.
+        f32 RevoltChance(World& world, const Settlement& settlement) const;
         void SpawnVillages(World& world);
 
         /// Migrants pooled per clan until they are numerous enough to found a village.

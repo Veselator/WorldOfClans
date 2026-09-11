@@ -3,6 +3,7 @@
 #include "VulkanDevice.h"
 #include "../Platform/Window.h"
 #include "../Core/Config.h"
+#include "../Core/Profiler.h"
 #include "../Core/Paths.h"
 #include "../Core/ImageIO.h"
 
@@ -31,6 +32,10 @@ namespace woc
             Vec4 texel;
             Vec4 water;
             Vec4 flags;
+            Vec4 roadColor;     // rgb = packed earth, a = opacity
+            Vec4 bridgeColor;   // rgb = timber decking, a = edge softness in texels
+            Vec4 fog;           // x = on, y = seconds, z = dimming of explored land, w = scale
+            Vec4 fogColor;      // rgb = the colour of the unknown, a = contrast of the clouds
         };
 
         struct WaterPush
@@ -38,6 +43,10 @@ namespace woc
             Vec4 deepColor;
             Vec4 shallowColor;
             Vec4 settings;
+            Vec4 bounds;    // xy = map size in map units, zw = unused
+            Vec4 fog;       // x = on, y = seconds, z = cloud scale, w = contrast
+            Vec4 fogColor;  // rgb = the colour of the unknown
+            Vec4 foam;      // x = strength, y = width of the band, z = lace scale, w = churn
         };
 
         struct UIPush
@@ -45,7 +54,7 @@ namespace woc
             Vec4 mode;
         };
 
-        constexpr u32 kMaxOwnerSlots = 32;
+        constexpr u32 kMaxOwnerSlots = 128;
 
         f64 NowSeconds()
         {
@@ -82,6 +91,7 @@ namespace woc
         m_forestTiling = config.Float("render/forestTiling", 48.0f);
         m_fieldTiling = config.Float("render/fieldTiling", 72.0f);
         m_ownerTint = config.Float("render/ownerTint", 0.3f);
+        m_defaultOwnerTint = m_ownerTint;
         m_borderWidth = config.Float("render/borderWidth", 1.5f);
 
         m_lastFrameTime = NowSeconds();
@@ -114,11 +124,13 @@ namespace woc
 
         const VkDescriptorPoolSize sizes[] = {
             { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 16 },
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64 },
+            // Generous: besides the fixed sets, every map in the browser puts its baked
+            // portrait here, and a folder of maps is not a small number.
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256 },
         };
         VkDescriptorPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        poolInfo.maxSets = 32;
+        poolInfo.maxSets = 192;
         poolInfo.poolSizeCount = 2;
         poolInfo.pPoolSizes = sizes;
         VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_descriptorPool));
@@ -145,21 +157,18 @@ namespace woc
         layoutInfo.pBindings = &textureBinding;
         VK_CHECK(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_textureLayout));
 
-        // set 1 (terrain): five map layers plus the realm palette
-        VkDescriptorSetLayoutBinding terrainBindings[6]{};
-        for (u32 i = 0; i < 5; ++i)
+        // set 1 (terrain): the map layers plus the map-mode palette
+        VkDescriptorSetLayoutBinding terrainBindings[8]{};
+        for (u32 i = 0; i < 8; ++i)
         {
             terrainBindings[i].binding = i;
             terrainBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             terrainBindings[i].descriptorCount = 1;
             terrainBindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
-        terrainBindings[5].binding = 5;
-        terrainBindings[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        terrainBindings[5].descriptorCount = 1;
-        terrainBindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        terrainBindings[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 
-        layoutInfo.bindingCount = 6;
+        layoutInfo.bindingCount = 8;
         layoutInfo.pBindings = terrainBindings;
         VK_CHECK(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_terrainLayout));
     }
@@ -250,7 +259,7 @@ namespace woc
                               VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                               VK_IMAGE_ASPECT_COLOR_BIT);
         m_terrainColor.UploadPixels(white, sizeof(white));
-        for (GpuImage* mask : { &m_treeMask, &m_fieldMask, &m_ownerMask })
+        for (GpuImage* mask : { &m_treeMask, &m_fieldMask, &m_ownerMask, &m_roadMask, &m_fogMask, &m_shoreMask })
         {
             mask->Create(1, 1, VK_FORMAT_R8_UNORM,
                          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -270,40 +279,85 @@ namespace woc
         alloc.pSetLayouts = &m_terrainLayout;
         VK_CHECK(vkAllocateDescriptorSets(VulkanDevice::Get().Handle(), &alloc, &m_terrainSet));
         RefreshTerrainDescriptor();
+
+        // The sea pass wants exactly one layer, so it borrows the plain texture layout.
+        m_shoreSet = CreateTextureSet(m_shoreMask.View(), m_linearSampler);
+
+        m_minimapImage.Create(1, 1, VK_FORMAT_R8G8B8A8_UNORM,
+                              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_COLOR_BIT);
+        m_minimapImage.UploadPixels(white, sizeof(white));
+        m_minimapSet = CreateTextureSet(m_minimapImage.View(), m_nearestSampler);
     }
 
     void Renderer::RefreshTerrainDescriptor()
     {
         VkDevice device = VulkanDevice::Get().Handle();
 
-        const VkDescriptorImageInfo images[5] = {
+        const VkDescriptorImageInfo images[7] = {
             { m_nearestSampler, m_terrainColor.View(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
             { m_linearSampler,  m_treeMask.View(),     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
             { m_linearSampler,  m_fieldMask.View(),    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
             { m_nearestSampler, m_ownerMask.View(),    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
             { m_nearestSampler, m_atlasImage.View(),   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+            // Linear, because the road layer is already at pixel resolution: filtering here
+            // only softens the last half-pixel of the verge instead of blurring whole tiles.
+            { m_linearSampler,  m_roadMask.View(),     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+            // Linear, so the edge of what is known is a soft front rather than a staircase.
+            { m_linearSampler,  m_fogMask.View(),      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         };
 
-        VkWriteDescriptorSet writes[6]{};
-        for (u32 i = 0; i < 5; ++i)
+        VkWriteDescriptorSet writes[8]{};
+        for (u32 i = 0; i < 7; ++i)
         {
+            const u32 binding = i;
             writes[i] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
             writes[i].dstSet = m_terrainSet;
-            writes[i].dstBinding = i;
+            writes[i].dstBinding = binding;
             writes[i].descriptorCount = 1;
             writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[i].pImageInfo = &images[i];
         }
 
         VkDescriptorBufferInfo paletteInfo{ m_palette.Handle(), 0, sizeof(Vec4) * kMaxOwnerSlots };
-        writes[5] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        writes[5].dstSet = m_terrainSet;
-        writes[5].dstBinding = 5;
-        writes[5].descriptorCount = 1;
-        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[5].pBufferInfo = &paletteInfo;
+        writes[7] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        writes[7].dstSet = m_terrainSet;
+        writes[7].dstBinding = 7;
+        writes[7].descriptorCount = 1;
+        writes[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[7].pBufferInfo = &paletteInfo;
 
-        vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
+        vkUpdateDescriptorSets(device, 8, writes, 0, nullptr);
+    }
+
+    void Renderer::RefreshShoreDescriptor()
+    {
+        if (m_shoreSet == VK_NULL_HANDLE) return;
+
+        VkDescriptorImageInfo info{ m_linearSampler, m_shoreMask.View(),
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        write.dstSet = m_shoreSet;
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(VulkanDevice::Get().Handle(), 1, &write, 0, nullptr);
+    }
+
+    void Renderer::RefreshMinimapDescriptor()
+    {
+        if (m_minimapSet == VK_NULL_HANDLE) return;
+
+        VkDescriptorImageInfo info{ m_nearestSampler, m_minimapImage.View(),
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        write.dstSet = m_minimapSet;
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(VulkanDevice::Get().Handle(), 1, &write, 0, nullptr);
     }
 
     void Renderer::CreatePipelines()
@@ -336,10 +390,12 @@ namespace woc
         }
 
         {
-            const VkDescriptorSetLayout sets[] = { m_globalLayout };
+            // The sea reads one layer of its own: how near each stretch of water is to a
+            // shore, which is what decides where the surf breaks.
+            const VkDescriptorSetLayout sets[] = { m_globalLayout, m_textureLayout };
             VkPushConstantRange range{ VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(WaterPush) };
             VkPipelineLayoutCreateInfo info{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-            info.setLayoutCount = 1;
+            info.setLayoutCount = 2;
             info.pSetLayouts = sets;
             info.pushConstantRangeCount = 1;
             info.pPushConstantRanges = &range;
@@ -511,26 +567,52 @@ namespace woc
 
     void Renderer::UpdateMask(GpuImage& image, const std::vector<u8>& mask, u32 width, u32 height)
     {
-        if (mask.empty() || width == 0 || height == 0) return;
+        StreamMask(image, mask, width, height, VK_FORMAT_R8_UNORM, &Renderer::RefreshTerrainDescriptor);
+    }
 
-        VulkanDevice::Get().WaitIdle();
+    void Renderer::StreamMask(GpuImage& image, const std::vector<u8>& pixels, u32 width, u32 height,
+                              VkFormat format, void (Renderer::*refresh)())
+    {
+        if (pixels.empty() || width == 0 || height == 0) return;
+
+        // A different size means a different image, and that has to be done the slow way:
+        // the old one may be bound into a frame that has not finished, and the descriptor
+        // pointing at it has to be rewritten.
         if (image.Width() != width || image.Height() != height)
         {
-            image.Create(width, height, VK_FORMAT_R8_UNORM,
+            VulkanDevice::Get().WaitIdle();
+            image.Create(width, height, format,
                          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                          VK_IMAGE_ASPECT_COLOR_BIT);
-            image.UploadPixels(mask.data(), mask.size());
-            RefreshTerrainDescriptor();
+            image.UploadPixels(pixels.data(), pixels.size());
+            if (refresh) (this->*refresh)();
+            return;
         }
-        else
+
+        // The ordinary case: a layer that changed. Nothing waits and nothing is allocated;
+        // the copy rides into the frame the renderer is about to record. If the staging
+        // buffer is still in the GPU's hands the update is simply skipped - these layers
+        // are rewritten from scratch several times a second, so a missed one costs nothing.
+        if (!image.StagePixels(pixels.data(), pixels.size(), m_frameCounter, kFramesInFlight)) return;
+
+        if (std::find(m_streaming.begin(), m_streaming.end(), &image) == m_streaming.end())
         {
-            image.UploadPixels(mask.data(), mask.size());
+            m_streaming.push_back(&image);
+        }
+    }
+
+    void Renderer::RecordPendingUploads(VkCommandBuffer cmd)
+    {
+        for (GpuImage* image : m_streaming)
+        {
+            if (image->HasStagedUpload()) image->RecordStagedUpload(cmd, m_frameCounter);
         }
     }
 
     void Renderer::SetWaterPlane(const Vec2& mapSize, f32 margin)
     {
         VulkanDevice::Get().WaitIdle();
+        m_mapSize = mapSize;
 
         // A single quad, far larger than the map, lying on the water datum. The camera is
         // clamped to the map, so this always fills the view whatever the zoom.
@@ -557,8 +639,9 @@ namespace woc
         if (!m_terrainEnabled || m_waterVertexCount == 0) return;
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_waterPipeline);
+        const VkDescriptorSet waterSets[] = { frame.globalSet, m_shoreSet };
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_waterPipelineLayout,
-                                0, 1, &frame.globalSet, 0, nullptr);
+                                0, 2, waterSets, 0, nullptr);
 
         ConfigManager& config = ConfigManager::Get();
         WaterPush push{};
@@ -573,6 +656,20 @@ namespace woc
                           config.Float("render/water/waveSpeed", 0.55f),
                           config.Float("render/water/glint", 0.14f),
                           config.Float("render/water/chop", 0.28f) };
+
+        // Under fog the open sea past the map's edge is as unknown as anything else, and it
+        // is the sea plane - not the terrain - that covers it.
+        const Color fogTint = Color::FromRGB(static_cast<u32>(
+            std::strtoul(config.Str("render/fog/color", "141b26").c_str(), nullptr, 16)));
+        push.bounds = { m_mapSize.x, m_mapSize.y, 0.0f, 0.0f };
+        push.fog = { m_fogEnabled ? 1.0f : 0.0f, m_elapsed,
+                     config.Float("render/fog/scale", 0.0045f),
+                     config.Float("render/fog/contrast", 0.62f) };
+        push.fogColor = { fogTint.r, fogTint.g, fogTint.b, 1.0f };
+        push.foam = { config.Float("render/water/foam", 0.75f),
+                      config.Float("render/water/foamWidth", 0.55f),
+                      config.Float("render/water/foamLace", 0.06f),
+                      config.Float("render/water/foamChurn", 0.9f) };
         vkCmdPushConstants(cmd, m_waterPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(push), &push);
 
@@ -584,14 +681,11 @@ namespace woc
 
     void Renderer::SetTerrainColor(const std::vector<u8>& colorRGBA, u32 width, u32 height)
     {
-        if (colorRGBA.empty() || width == 0 || height == 0) return;
-
-        VulkanDevice::Get().WaitIdle();
-        m_terrainColor.Create(width, height, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                              VK_IMAGE_ASPECT_COLOR_BIT);
-        m_terrainColor.UploadPixels(colorRGBA.data(), colorRGBA.size());
-        RefreshTerrainDescriptor();
+        // The colour layer is eight megabytes on a full-sized map, and the editor rewrites
+        // it after every stroke. Recreating the image each time meant a device allocation
+        // and a full drain per brush lift; now only a change of size does that.
+        StreamMask(m_terrainColor, colorRGBA, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+                   &Renderer::RefreshTerrainDescriptor);
         m_terrainTexturesReady = true;
     }
 
@@ -608,6 +702,23 @@ namespace woc
     void Renderer::SetOwnerMask(const std::vector<u8>& mask, u32 width, u32 height)
     {
         UpdateMask(m_ownerMask, mask, width, height);
+    }
+
+    void Renderer::SetRoadMask(const std::vector<u8>& mask, u32 width, u32 height)
+    {
+        UpdateMask(m_roadMask, mask, width, height);
+    }
+
+    void Renderer::SetFogMask(const std::vector<u8>& mask, u32 width, u32 height)
+    {
+        UpdateMask(m_fogMask, mask, width, height);
+    }
+
+    void Renderer::SetShoreMask(const std::vector<u8>& mask, u32 width, u32 height)
+    {
+        // Not the terrain descriptor: the surf is the sea's, and only the sea pass reads it.
+        StreamMask(m_shoreMask, mask, width, height, VK_FORMAT_R8_UNORM,
+                   &Renderer::RefreshShoreDescriptor);
     }
 
     void Renderer::SetOwnerPalette(const std::vector<Color>& colors)
@@ -660,7 +771,7 @@ namespace woc
         return VkRect2D{ { x, y }, { static_cast<u32>(right - x), static_cast<u32>(bottom - y) } };
     }
 
-    Renderer::UIDrawRange& Renderer::CurrentRange(UIDrawMode mode)
+    Renderer::UIDrawRange& Renderer::CurrentRange(UIDrawMode mode, u32 texture)
     {
         const VkRect2D scissor = ActiveScissor();
         if (!m_uiRanges.empty())
@@ -670,15 +781,23 @@ namespace woc
                                      last.scissor.offset.y == scissor.offset.y &&
                                      last.scissor.extent.width == scissor.extent.width &&
                                      last.scissor.extent.height == scissor.extent.height;
-            if (last.mode == mode && sameScissor) return last;
+            if (last.mode == mode && last.texture == texture && sameScissor) return last;
         }
-        m_uiRanges.push_back({ mode, static_cast<u32>(m_uiVertices.size()), 0, scissor });
+
+        UIDrawRange range{};
+        range.mode = mode;
+        range.texture = texture;
+        range.first = static_cast<u32>(m_uiVertices.size());
+        range.count = 0;
+        range.scissor = scissor;
+        m_uiRanges.push_back(range);
         return m_uiRanges.back();
     }
 
-    void Renderer::PushUIQuad(const Rect& rect, const Vec4& uv, const Color& color, UIDrawMode mode)
+    void Renderer::PushUIQuad(const Rect& rect, const Vec4& uv, const Color& color, UIDrawMode mode,
+                              u32 texture)
     {
-        UIDrawRange& range = CurrentRange(mode);
+        UIDrawRange& range = CurrentRange(mode, texture);
         const Vec2 topLeft{ rect.x, rect.y };
         const Vec2 topRight{ rect.Right(), rect.y };
         const Vec2 bottomRight{ rect.Right(), rect.Bottom() };
@@ -745,9 +864,81 @@ namespace woc
         PushUIQuad(rect, SpriteUV(sprite), tint, UIDrawMode::Sprite);
     }
 
-    void Renderer::UIText(const std::string& text, const Vec2& position, const Color& color, f32 scale)
+    void Renderer::UIMinimap(const Rect& rect, const Color& tint)
+    {
+        PushUIQuad(rect, { 0.0f, 0.0f, 1.0f, 1.0f }, tint, UIDrawMode::Minimap);
+    }
+
+    u32 Renderer::CreateUITexture(const std::vector<u8>& rgba, u32 width, u32 height)
+    {
+        if (width == 0 || height == 0 ||
+            rgba.size() < static_cast<size_t>(width) * height * 4) return 0;
+
+        // A freed slot is reused before a new one is taken: a screen that reloads its list
+        // of maps every time it opens must not eat through the descriptor pool.
+        size_t slot = m_uiTextures.size();
+        for (size_t i = 0; i < m_uiTextures.size(); ++i)
+        {
+            if (!m_uiTextures[i].alive) { slot = i; break; }
+        }
+        if (slot == m_uiTextures.size()) m_uiTextures.emplace_back();
+
+        UITexture& texture = m_uiTextures[slot];
+        VulkanDevice::Get().WaitIdle();
+        texture.image.Create(width, height, VK_FORMAT_R8G8B8A8_UNORM,
+                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                             VK_IMAGE_ASPECT_COLOR_BIT);
+        texture.image.UploadPixels(rgba.data(), rgba.size());
+
+        if (texture.set == VK_NULL_HANDLE)
+        {
+            texture.set = CreateTextureSet(texture.image.View(), m_linearSampler);
+        }
+        else
+        {
+            VkDescriptorImageInfo info{ m_linearSampler, texture.image.View(),
+                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            write.dstSet = texture.set;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &info;
+            vkUpdateDescriptorSets(VulkanDevice::Get().Handle(), 1, &write, 0, nullptr);
+        }
+
+        texture.alive = true;
+        return static_cast<u32>(slot + 1);   // 0 stays "nothing"
+    }
+
+    void Renderer::ReleaseUITexture(u32 handle)
+    {
+        if (handle == 0 || handle > m_uiTextures.size()) return;
+        // The image is kept, only marked free: the descriptor set is the scarce thing, and
+        // the next picture of the same kind will take this slot and overwrite the image.
+        m_uiTextures[handle - 1].alive = false;
+    }
+
+    void Renderer::UIImage(u32 handle, const Rect& rect, const Color& tint)
+    {
+        if (handle == 0 || handle > m_uiTextures.size()) return;
+        if (!m_uiTextures[handle - 1].alive) return;
+
+        PushUIQuad(rect, { 0.0f, 0.0f, 1.0f, 1.0f }, tint, UIDrawMode::Image, handle);
+    }
+
+    void Renderer::SetMinimapImage(const std::vector<u8>& rgba, u32 width, u32 height)
+    {
+        if (rgba.size() < static_cast<size_t>(width) * height * 4) return;
+        StreamMask(m_minimapImage, rgba, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+                   &Renderer::RefreshMinimapDescriptor);
+    }
+
+    void Renderer::UIText(const std::string& text, const Vec2& position, const Color& color, f32 request)
     {
         if (text.empty() || color.a <= 0.0f) return;
+
+        const f32 scale = request * m_uiScale;
 
         f32 penX = position.x;
         f32 penY = position.y + m_font.Ascent() * scale;
@@ -781,14 +972,16 @@ namespace woc
 
     void Renderer::UITextCentered(const std::string& text, const Rect& rect, const Color& color, f32 scale)
     {
+        // Both measurements go through the same scale the drawing will use, or centred
+        // text drifts off its box as soon as the interface is resized.
         const f32 width = TextWidth(text, scale);
-        const f32 height = m_font.LineHeight() * scale;
+        const f32 height = TextHeight(scale);
         UIText(text, { rect.x + (rect.w - width) * 0.5f, rect.y + (rect.h - height) * 0.5f }, color, scale);
     }
 
     f32 Renderer::TextWidth(const std::string& text, f32 scale) const
     {
-        return m_font.MeasureWidth(text) * scale;
+        return m_font.MeasureWidth(text) * scale * m_uiScale;
     }
 
     void Renderer::PushClip(const Rect& rect)
@@ -849,8 +1042,10 @@ namespace woc
         VkDevice device = VulkanDevice::Get().Handle();
         FrameData& frame = m_frames[m_frameIndex];
 
-        VK_CHECK(vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX));
+        { WOC_PROFILE("wait.fence");
+          VK_CHECK(vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX)); }
 
+        WOC_PROFILE("wait.acquire");
         if (!m_swapchain.AcquireNextImage(frame.imageAvailable, m_imageIndex))
         {
             OnResize(m_window->Width(), m_window->Height());
@@ -891,7 +1086,24 @@ namespace woc
             std::strtoul(ConfigManager::Get().Str("render/water/mapColor", "00fff6").c_str(), nullptr, 16)));
         push.water = { water.r, water.g, water.b,
                        ConfigManager::Get().Float("render/water/matchTolerance", 0.12f) };
-        push.flags = { m_bordersVisible ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
+        push.flags = { m_bordersVisible ? 1.0f : 0.0f, m_borderStrength,
+                       ConfigManager::Get().Float("render/fieldOpacity", 1.0f),
+                       ConfigManager::Get().Float("render/fieldFullDensity", 0.22f) };
+
+        ConfigManager& config = ConfigManager::Get();
+        const Color earth = Color::FromRGB(static_cast<u32>(
+            std::strtoul(config.Str("render/roads/color", "6b4f2a").c_str(), nullptr, 16)));
+        const Color deck = Color::FromRGB(static_cast<u32>(
+            std::strtoul(config.Str("render/roads/bridgeColor", "9a7b4f").c_str(), nullptr, 16)));
+        push.roadColor = { earth.r, earth.g, earth.b, config.Float("render/roads/opacity", 0.92f) };
+        push.bridgeColor = { deck.r, deck.g, deck.b, config.Float("render/roads/edgeSoftness", 0.12f) };
+
+        const Color fogTint = Color::FromRGB(static_cast<u32>(
+            std::strtoul(config.Str("render/fog/color", "2a3440").c_str(), nullptr, 16)));
+        push.fog = { m_fogEnabled ? 1.0f : 0.0f, m_elapsed,
+                     config.Float("render/fog/exploredDim", 0.45f),
+                     config.Float("render/fog/scale", 0.006f) };
+        push.fogColor = { fogTint.r, fogTint.g, fogTint.b, config.Float("render/fog/contrast", 0.35f) };
 
         vkCmdPushConstants(cmd, m_terrainPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(push), &push);
@@ -956,6 +1168,13 @@ namespace woc
             VkDescriptorSet texture = m_whiteSet;
             if (range.mode == UIDrawMode::Glyph) texture = m_fontSet;
             else if (range.mode == UIDrawMode::Sprite) texture = m_atlasSet;
+            else if (range.mode == UIDrawMode::Minimap) texture = m_minimapSet;
+            else if (range.mode == UIDrawMode::Image)
+            {
+                if (range.texture == 0 || range.texture > m_uiTextures.size()) continue;
+                texture = m_uiTextures[range.texture - 1].set;
+                if (texture == VK_NULL_HANDLE) continue;
+            }
 
             if (texture != lastTexture)
             {
@@ -998,6 +1217,10 @@ namespace woc
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
+        // Every map layer that changed since the last frame is copied here, inside the
+        // frame's own command buffer, rather than through a stalling one-shot submit.
+        { WOC_PROFILE("rec.uploads"); RecordPendingUploads(cmd); }
+
         VkClearValue clears[2]{};
         clears[0].color = { { m_clearColor.r, m_clearColor.g, m_clearColor.b, m_clearColor.a } };
         clears[1].depthStencil = { 1.0f, 0 };
@@ -1015,11 +1238,11 @@ namespace woc
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &fullScissor);
 
-        RecordWater(cmd, frame);
-        RecordTerrain(cmd, frame);
-        RecordSprites(cmd, frame);
+        { WOC_PROFILE("rec.water");   RecordWater(cmd, frame); }
+        { WOC_PROFILE("rec.terrain"); RecordTerrain(cmd, frame); }
+        { WOC_PROFILE("rec.sprites"); RecordSprites(cmd, frame); }
         vkCmdSetScissor(cmd, 0, 1, &fullScissor);
-        RecordUI(cmd, frame);
+        { WOC_PROFILE("rec.ui");      RecordUI(cmd, frame); }
 
         vkCmdEndRenderPass(cmd);
         VK_CHECK(vkEndCommandBuffer(cmd));
@@ -1035,14 +1258,17 @@ namespace woc
         submit.pCommandBuffers = &cmd;
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &signal;
-        VK_CHECK(vkQueueSubmit(VulkanDevice::Get().GraphicsQueue(), 1, &submit, frame.inFlight));
+        { WOC_PROFILE("gpu.queueSubmit");
+          VK_CHECK(vkQueueSubmit(VulkanDevice::Get().GraphicsQueue(), 1, &submit, frame.inFlight)); }
 
+        WOC_PROFILE("gpu.present");
         if (!m_swapchain.Present(signal, m_imageIndex))
         {
             m_needsResize = true;
         }
 
         m_frameIndex = (m_frameIndex + 1) % kFramesInFlight;
+        ++m_frameCounter;
     }
 
     void Renderer::DestroyPipelines()
@@ -1050,7 +1276,8 @@ namespace woc
         VkDevice device = VulkanDevice::Get().Handle();
         if (!device) return;
 
-        for (VkPipeline* pipeline : { &m_waterPipeline, &m_terrainPipeline, &m_spritePipeline, &m_uiPipeline })
+        for (VkPipeline* pipeline : { &m_waterPipeline, &m_terrainPipeline,
+                                      &m_spritePipeline, &m_uiPipeline })
         {
             if (*pipeline) { vkDestroyPipeline(device, *pipeline, nullptr); *pipeline = VK_NULL_HANDLE; }
         }
@@ -1091,6 +1318,8 @@ namespace woc
         m_treeMask.Destroy();
         m_fieldMask.Destroy();
         m_ownerMask.Destroy();
+        m_roadMask.Destroy();
+        m_fogMask.Destroy();
 
         DestroyPipelines();
 

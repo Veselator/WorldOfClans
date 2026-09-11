@@ -41,11 +41,11 @@
       "name": "Каменярня",
       "description": "Освоює поклади каменю в пагорбах і горах поблизу.",
       "allowedKinds": ["village", "city", "castle"],
-      "requires": { "stoneNearby": 0.5 },
+      "requires": { "stoneNearby": 0.22 },
       "cost": { "money": 220, "wood": 120, "stone": 0, "food": 0 },
       "buildDays": 60,
       "decorator": "production",
-      "effect": { "resource": "stone", "multiplier": 1.0, "flat": 2.4 },
+      "effect": { "resource": "stone", "multiplier": 1.0, "flat": 2.88 },
       "extra": { "revealsQuarrySprite": true }
     },
     {
@@ -132,16 +132,6 @@
       "effect": { "loyaltyPerMonth": 0.03, "distancePenaltyMultiplier": 0.6 }
     },
     {
-      "id": "roadHub",
-      "name": "Мощені дороги",
-      "description": "Дружина приходить вчасно, а каравани — частіше.",
-      "allowedKinds": ["city", "castle", "village"],
-      "cost": { "money": 260, "wood": 80, "stone": 240, "food": 0 },
-      "buildDays": 85,
-      "decorator": "coverage",
-      "effect": { "coverageMultiplier": 1.18, "caravanBonus": 0.15 }
-    },
-    {
       "id": "watchtower",
       "name": "Сторожова вежа",
       "description": "Далі видно — далі сягає влада.",
@@ -150,18 +140,6 @@
       "buildDays": 60,
       "decorator": "coverage",
       "effect": { "coverageMultiplier": 1.25 }
-    },
-    {
-      "id": "bridge",
-      "name": "Міст",
-      "description": "Пускає владу й військо через широку воду.",
-      "allowedKinds": ["city", "castle", "village"],
-      "requires": { "waterNearby": 0.05 },
-      "cost": { "money": 340, "wood": 220, "stone": 260, "food": 0 },
-      "buildDays": 110,
-      "decorator": "coverage",
-      "effect": { "coverageMultiplier": 1.0 },
-      "extra": { "bridgesWater": true, "bridgeRadius": 70.0 }
     }
   ],
 

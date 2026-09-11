@@ -27,6 +27,10 @@ namespace woc
         node["y"] = position.y;
         node["experience"] = experience;
         node["supply"] = supply;
+        node["mayRaid"] = mayRaid;
+        node["suppressRevolts"] = suppressRevolts;
+        node["disengage"] = disengageDays;
+        node["organisation"] = organisation;
         node["garrisonOf"] = EncodeId(garrisonOf);
         node["units"] = EncodeIdList(units);
 
@@ -49,6 +53,10 @@ namespace woc
         cohort.position = { node["x"].AsFloat(0.0f), node["y"].AsFloat(0.0f) };
         cohort.experience = node["experience"].AsFloat(0.0f);
         cohort.supply = node["supply"].AsFloat(1.0f);
+        cohort.mayRaid = node["mayRaid"].AsBool(false);
+        cohort.suppressRevolts = node["suppressRevolts"].AsBool(false);
+        cohort.disengageDays = node["disengage"].AsFloat(0.0f);
+        cohort.organisation = node["organisation"].AsFloat(1.0f);
         cohort.garrisonOf = DecodeId(node["garrisonOf"]);
         cohort.units = DecodeIdList(node["units"]);
 

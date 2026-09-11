@@ -59,7 +59,24 @@ namespace woc
         void Destroy();
 
         /// Uploads tightly packed pixels and leaves the image ready for shader reads.
+        /// Synchronous: it allocates a staging buffer and drains the queue, so it belongs
+        /// to loading, not to a running frame. Use StagePixels for layers that change.
         void UploadPixels(const void* pixels, VkDeviceSize byteSize);
+
+        /// Copies pixels into a staging buffer this image keeps for the purpose, to be
+        /// handed to the GPU inside the next frame's command buffer. Nothing is allocated
+        /// after the first call and nothing waits, which is what makes a layer that changes
+        /// several times a second affordable at all.
+        ///
+        /// `frame` is a monotonically rising frame counter and `framesInFlight` how many
+        /// frames deep the renderer runs; together they say when the staging buffer is
+        /// certainly free again. Returns false when it is not - the caller has simply come
+        /// too early and should offer the same data on a later frame.
+        bool StagePixels(const void* pixels, VkDeviceSize byteSize, u64 frame, u32 framesInFlight);
+        bool HasStagedUpload() const { return m_stagePending; }
+        /// Records the staged copy. The renderer calls this inside the frame's command
+        /// buffer, before the render pass opens.
+        void RecordStagedUpload(VkCommandBuffer cmd, u64 frame);
 
         void TransitionLayout(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout);
 
@@ -80,5 +97,13 @@ namespace woc
         VkImageAspectFlags m_aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         u32 m_width = 0;
         u32 m_height = 0;
+
+        // --- streaming -------------------------------------------------------------------
+        GpuBuffer m_staging;            // kept between uploads; never reallocated for the
+                                        // same size, which is the whole point
+        VkDeviceSize m_stageBytes = 0;
+        bool m_stagePending = false;    // staged, not yet recorded
+        bool m_stageRecorded = false;   // recorded at least once
+        u64 m_stageFrame = 0;           // the frame the last copy was recorded on
     };
 }

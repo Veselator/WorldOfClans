@@ -3,6 +3,10 @@
 #include "Players/AIPlayer.h"
 #include "Players/HumanPlayer.h"
 #include "Systems/CoverageSystem.h"
+#include "Systems/FogSystem.h"
+#include "Systems/MarketSystem.h"
+#include "Systems/ForestrySystem.h"
+#include "Systems/RoadSystem.h"
 #include "Systems/Simulation.h"
 #include "World/World.h"
 #include "../Core/Json.h"
@@ -59,6 +63,8 @@ namespace woc
         const State* human = const_cast<World&>(world).HumanState();
         root["realm"] = human ? human->name : std::string();
         root["world"] = world.SaveObjects();
+        root["fog"] = FogSystem::Get().ToJson();
+        root["market"] = MarketSystem::Get().ToJson();
 
         const std::string path = SlotPath(clean + kExtension);
         if (!root.SaveFile(path, 0))   // compact: saves are data, not documentation
@@ -92,6 +98,8 @@ namespace woc
 
         world.LoadObjects(root["world"]);
         world.Time().SetTotalDays(root["day"].AsInt(0));
+        FogSystem::Get().FromJson(root["fog"], world);
+        MarketSystem::Get().FromJson(root["market"]);
 
         // Seats are not stored: they follow from which realm the save says is the player's.
         std::vector<EntityId> stateIds;
@@ -115,6 +123,9 @@ namespace woc
             }
         }
 
+        RoadSystem::Get().Reset();
+        RoadSystem::Get().StampExisting(world);
+        ForestrySystem::Get().ClearUnarableFields(world);
         Simulation::Get().Reset();
         CoverageSystem::Get().MarkDirty();
         WOC_LOG_INFO("Loaded save ", path, " (", world.Settlements().size(), " settlements)");

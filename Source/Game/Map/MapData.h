@@ -7,6 +7,7 @@
 #pragma once
 
 #include "TerrainTypes.h"
+#include "../../Core/ImageIO.h"
 #include "../../Core/Math.h"
 
 namespace woc
@@ -15,6 +16,7 @@ namespace woc
     {
         u8 terrain = 0;
         u8 owner = 0;          // 0 = unclaimed, otherwise a realm palette slot
+        u8 holder = 0;         // which individual seat's zone of influence this tile is in
         u8 road = 0;           // 0 = none, higher = better road
         bool fordable = false; // narrow water an army can wade across
         bool bridged = false;  // a bridge lets coverage and troops cross wide water
@@ -28,6 +30,9 @@ namespace woc
     {
     public:
         void Allocate(u32 pixelWidth, u32 pixelHeight, u32 tilePixels);
+        /// Re-shapes the map, keeping what is already painted. Ground that falls outside
+        /// the new bounds is lost; ground the map grows into is filled with `fill`.
+        void Resize(u32 pixelWidth, u32 pixelHeight, u8 fill);
 
         // --- dimensions --------------------------------------------------------------------
         u32 PixelWidth() const { return m_pixelWidth; }
@@ -88,6 +93,15 @@ namespace woc
         std::vector<u8> BuildForestMask() const;
         std::vector<u8> BuildFieldMask() const;
         std::vector<u8> BuildOwnerMask() const;
+        /// Nearness to the waterline, on both sides of it: 255 on the tiles that touch the
+        /// coast - sea and beach alike - fading to 0 `reach` tiles away in either direction.
+        ///
+        /// Both sides, because the ground does not stop where the colour layer says the sea
+        /// does: elevation runs smoothly across the coast, so a strip of what is drawn as
+        /// land still reads as shallows. Surf that breaks only seaward of the line leaves
+        /// that strip looking like flooded field. The sea pass shades its half and the
+        /// terrain pass shades the other, from this one mask, so the band is continuous.
+        std::vector<u8> BuildShoreMask(i32 reach) const;
 
         void ClearOwners();
 
@@ -98,6 +112,16 @@ namespace woc
         /// Marks narrow water as fordable by measuring the distance from each water tile
         /// to the nearest land; wide rivers and open sea stay impassable.
         void ComputeFordableWater(i32 fordRadius);
+
+        /// The map's portrait: the colour layer boxed down to a small RGBA picture, with
+        /// the forest darkening it and the slopes shaded, so that a thumbnail reads as
+        /// country rather than as a flat colour chart. Baked once when a map is saved and
+        /// then used everywhere a small picture of the world is wanted - the minimap, the
+        /// map list before a party, the editor's browser.
+        ///
+        /// `width` is fixed; the height follows the map's own proportions so nothing is
+        /// stretched.
+        ImageData BuildMinimapImage(u32 width) const;
 
         const std::vector<u8>& ColorPixels() const { return m_colorPixels; }
         std::vector<u8>& ColorPixels() { return m_colorPixels; }

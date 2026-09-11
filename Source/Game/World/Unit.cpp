@@ -50,6 +50,7 @@ namespace woc
         node["training"] = training;
         node["fatigue"] = fatigue;
         node["characters"] = EncodeIdList(characters);
+        node["wounded"] = EncodeIdList(wounded);
         return node;
     }
 
@@ -66,6 +67,7 @@ namespace woc
         unit.training = node["training"].AsFloat(0.35f);
         unit.fatigue = node["fatigue"].AsFloat(0.0f);
         unit.characters = DecodeIdList(node["characters"]);
+        unit.wounded = DecodeIdList(node["wounded"]);
         return unit;
     }
 }

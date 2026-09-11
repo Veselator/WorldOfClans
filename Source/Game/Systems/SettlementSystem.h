@@ -50,8 +50,29 @@ namespace woc
         bool StartConversion(World& world, EntityId settlementId, const std::string& faithId);
         bool Raze(World& world, EntityId settlementId, EntityId actingClan);
         bool GrantIndependence(World& world, EntityId settlementId);
-        /// Founds a new settlement paid for by `clanId`.
-        EntityId Found(World& world, EntityId clanId, SettlementKind kind, const Vec2& position);
+
+        /// What it costs this clan to open the quarry, and whether it may.
+        struct MineOffer
+        {
+            bool allowed = false;
+            bool affordable = false;
+            std::string blockedReason;
+            ResourceData cost;
+            f32 stonePerMonth = 0.0f;
+            i32 days = 0;
+        };
+        MineOffer MineOptions(World& world, EntityId clanId, EntityId mineId) const;
+        /// How long opening a quarry takes. The same figure as the quarry a town builds
+        /// inside its own walls, because it is the same work.
+        i32 MineDevelopDays() const;
+        /// Advances every quarry being dug. Called with the settlements' own construction.
+        void TickMines(World& world, f32 days);
+        /// Opens the quarry for `clanId`: charges the cost and puts it to work.
+        bool DevelopMine(World& world, EntityId clanId, EntityId mineId);
+        /// Founds a new settlement paid for by `clanId`. An empty name draws one from the
+        /// pool. The settlers are taken from the clan's nearby holdings, not invented.
+        EntityId Found(World& world, EntityId clanId, SettlementKind kind, const Vec2& position,
+                       const std::string& name = std::string());
 
     private:
         SettlementSystem() = default;

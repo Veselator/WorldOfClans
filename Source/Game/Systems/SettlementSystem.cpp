@@ -246,9 +246,35 @@ namespace woc
         const Json& action = SettlementDatabase::Get().Action("raze");
         if (Clan* clan = world.FindClan(actingClan))
         {
-            clan->resources.money += static_cast<f32>(settlement->population) *
-                                     action["lootMoneyPerPopulation"].AsFloat(0.2f);
-            world.Log(settlement->name + " спалено дощенту", Color::FromRGB(0xC05046));
+            // A village is not only people: it is a winter's grain, the timber in its roofs
+            // and whatever the headman had put by. Burning it out empties all of that into
+            // the baggage train - which is the only reason anyone would do it.
+            const f32 heads = static_cast<f32>(settlement->population);
+            const f32 wealth = std::max(1.0f, settlement->prosperity);
+
+            ResourceData loot;
+            loot.money = heads * action["lootMoneyPerPopulation"].AsFloat(0.45f) +
+                         wealth * action["lootMoneyPerProsperity"].AsFloat(0.8f);
+            loot.food  = heads * action["lootFoodPerPopulation"].AsFloat(0.30f);
+            loot.wood  = heads * action["lootWoodPerPopulation"].AsFloat(0.18f);
+
+            // Whatever was built there is pulled down and carted off with the rest.
+            for (const std::string& buildingId : settlement->buildings)
+            {
+                const BuildingInfo* building = BuildingDatabase::Get().Find(buildingId);
+                if (!building) continue;
+                const f32 salvage = action["salvageShare"].AsFloat(0.35f);
+                loot.wood  += building->cost.wood * salvage;
+                loot.stone += building->cost.stone * salvage;
+            }
+
+            clan->resources += loot;
+            world.Log(settlement->name + " спалено дощенту: " +
+                      std::to_string(static_cast<i32>(loot.money)) + " срібла, " +
+                      std::to_string(static_cast<i32>(loot.food)) + " їжі, " +
+                      std::to_string(static_cast<i32>(loot.wood)) + " дерева, " +
+                      std::to_string(static_cast<i32>(loot.stone)) + " каменю",
+                      Color::FromRGB(0xC05046));
         }
 
         world.DestroySettlement(settlementId);
@@ -269,33 +295,161 @@ namespace woc
         return true;
     }
 
-    EntityId SettlementSystem::Found(World& world, EntityId clanId, SettlementKind kind, const Vec2& position)
+    EntityId SettlementSystem::Found(World& world, EntityId clanId, SettlementKind kind,
+                                     const Vec2& position, const std::string& name)
     {
         Clan* clan = world.FindClan(clanId);
         if (!clan) return kInvalidId;
 
         const SettlementKindInfo& info = SettlementDatabase::Get().Kind(kind);
         if (!clan->resources.CanAfford(info.buildCost)) return kInvalidId;
-        if (!SettlementFactory::CanPlace(world, world.Map(), kind, position)) return kInvalidId;
+        if (!SettlementFactory::CanPlace(world, world.Map(), kind, position, clanId)) return kInvalidId;
+
+        // Who goes there. The nearest holdings give up the most, and none is stripped below
+        // what keeps it alive, so a new city is paid for in people as well as in silver.
+        std::vector<std::pair<f32, EntityId>> sources;
+        for (EntityId settlementId : clan->settlements)
+        {
+            const Settlement* source = world.FindSettlement(settlementId);
+            if (!source) continue;
+            const f32 distance = Distance(source->position, position);
+            if (distance > info.settlerRange) continue;
+            sources.emplace_back(distance, settlementId);
+        }
+        std::sort(sources.begin(), sources.end());
+
+        i32 gathered = 0;
+        const i32 floor = ConfigManager::Get().Int("population/settlerFloor", 240);
+        for (const auto& [distance, settlementId] : sources)
+        {
+            if (gathered >= info.settlers) break;
+            Settlement* source = world.FindSettlement(settlementId);
+            if (!source || source->population <= floor) continue;
+
+            // A third of the surplus at most, so no holding is gutted for a neighbour.
+            const i32 spare = std::min((source->population - floor) / 3, info.settlers - gathered);
+            if (spare <= 0) continue;
+
+            source->population -= spare;
+            gathered += spare;
+        }
+
+        if (gathered < info.settlers / 4)
+        {
+            world.Log("Нема кого селити: навколо надто мало люду", Color::FromRGB(0xD2933A));
+            return kInvalidId;
+        }
 
         clan->resources -= info.buildCost;
 
         SettlementRequest request;
         request.kind = kind;
         request.position = position;
+        // A new holding is founded in the lord's own image: his people and his gods.
         request.raceId = clan->raceId;
         request.faithId = clan->faithId;
         request.owner = clanId;
+        request.population = gathered;
+        request.name = name;
 
         Settlement& settlement = SettlementFactory::Create(world, request, GlobalRandom());
-        world.Log("Засновано поселення " + settlement.name, clan->color);
+        world.Log("Засновано поселення " + settlement.name + " (" + std::to_string(gathered) +
+                  " переселенців)", clan->color);
         CoverageSystem::Get().MarkDirty();
         return settlement.id;
+    }
+
+    SettlementSystem::MineOffer SettlementSystem::MineOptions(World& world, EntityId clanId,
+                                                              EntityId mineId) const
+    {
+        MineOffer offer;
+        const Clan* clan = world.FindClan(clanId);
+        const MineSite* mine = world.FindMine(mineId);
+        if (!clan || !mine) return offer;
+
+        ConfigManager& config = ConfigManager::Get();
+        offer.cost.money = config.Float("economy/mineDevelopMoney", 240.0f);
+        offer.cost.wood = config.Float("economy/mineDevelopWood", 120.0f);
+        offer.stonePerMonth = mine->richness * config.Float("economy/stonePerDevelopedMine", 5.5f);
+        offer.days = MineDevelopDays();
+
+        if (mine->developed)
+        {
+            offer.blockedReason = mine->owner == clanId
+                ? "Каменярня вже працює на вас"
+                : "Каменярня вже освоєна";
+            return offer;
+        }
+
+        if (mine->UnderWay())
+        {
+            offer.blockedReason = mine->owner == clanId
+                ? "Каменярню вже закладено"
+                : "Каменярню закладає інший рід";
+            return offer;
+        }
+
+        // A quarry is opened on one's own ground, like everything else built on the map.
+        if (CoverageSystem::Get().OwnerAt(world, mine->position) != clanId)
+        {
+            offer.blockedReason = "Каменярня поза вашими володіннями";
+            return offer;
+        }
+
+        offer.allowed = true;
+        offer.affordable = clan->resources.CanAfford(offer.cost);
+        if (!offer.affordable) offer.blockedReason = "Бракує коштів";
+        return offer;
+    }
+
+    i32 SettlementSystem::MineDevelopDays() const
+    {
+        const BuildingInfo* quarry = BuildingDatabase::Get().Find("quarry");
+        const i32 fallback = quarry ? quarry->buildDays : 60;
+        return ConfigManager::Get().Int("economy/mineDevelopDays", fallback);
+    }
+
+    void SettlementSystem::TickMines(World& world, f32 days)
+    {
+        for (MineSite& mine : world.Mines())
+        {
+            if (!mine.UnderWay()) continue;
+
+            mine.daysRemaining -= days;
+            if (mine.daysRemaining > 0.0f) continue;
+
+            mine.daysRemaining = 0.0f;
+            mine.developed = true;
+
+            const Clan* clan = world.FindClan(mine.owner);
+            world.Log(clan ? "Каменярню освоєно родом " + clan->name : "Каменярню освоєно",
+                      clan ? clan->color : Color(0.8f, 0.8f, 0.8f, 1.0f));
+        }
+    }
+
+    bool SettlementSystem::DevelopMine(World& world, EntityId clanId, EntityId mineId)
+    {
+        const MineOffer offer = MineOptions(world, clanId, mineId);
+        if (!offer.allowed || !offer.affordable) return false;
+
+        Clan* clan = world.FindClan(clanId);
+        MineSite* mine = world.FindMine(mineId);
+        if (!clan || !mine) return false;
+
+        clan->resources -= offer.cost;
+        mine->owner = clanId;
+        mine->daysTotal = static_cast<f32>(offer.days);
+        mine->daysRemaining = mine->daysTotal;
+
+        world.Log("Рід " + clan->name + " закладає каменярню", clan->color);
+        return true;
     }
 
     void SettlementSystem::Tick(World& world, i32 days)
     {
         if (days <= 0) return;
+
+        TickMines(world, static_cast<f32>(days));
 
         const RaceDatabase& races = RaceDatabase::Get();
 

@@ -8,10 +8,12 @@
       "canBeIndependent": true,
       "buildCost": { "money": 150, "wood": 60, "stone": 0, "food": 40 },
       "buildDays": 60,
+      "settlers": 180,
+      "settlerRange": 420.0,
       "tiers": [
-        { "tier": 1, "name": "Хутір",   "minPopulation": 0,    "maxPopulation": 400,  "coverage": 0.0,  "production": 1.0, "garrison": 1, "prosperityCap": 0.6 },
-        { "tier": 2, "name": "Сільце",    "minPopulation": 400,  "maxPopulation": 900,  "coverage": 0.0,  "production": 1.9, "garrison": 2, "prosperityCap": 0.8 },
-        { "tier": 3, "name": "Слобода", "minPopulation": 900,  "maxPopulation": 1800, "coverage": 0.0,  "production": 3.1, "garrison": 3, "prosperityCap": 1.0 }
+        { "tier": 1, "name": "Хутір",   "minPopulation": 0,    "maxPopulation": 400,  "coverage": 0.0,  "production": 1.0, "garrison": 1, "prosperityCap": 90 },
+        { "tier": 2, "name": "Сільце",    "sprite": "VillageLarge", "minPopulation": 400,  "maxPopulation": 900,  "coverage": 0.0,  "production": 1.9, "garrison": 2, "prosperityCap": 160 },
+        { "tier": 3, "name": "Слобода", "sprite": "VillageGreat", "minPopulation": 900,  "maxPopulation": 1800, "coverage": 0.0,  "production": 3.1, "garrison": 3, "prosperityCap": 250 }
       ]
     },
     {
@@ -22,10 +24,12 @@
       "canBeIndependent": false,
       "buildCost": { "money": 900, "wood": 320, "stone": 260, "food": 220 },
       "buildDays": 240,
+      "settlers": 900,
+      "settlerRange": 700.0,
       "tiers": [
-        { "tier": 1, "name": "Містечко",       "minPopulation": 0,    "maxPopulation": 2500,  "coverage": 1.00, "production": 1.0, "garrison": 4, "prosperityCap": 0.8 },
-        { "tier": 2, "name": "Місто",         "minPopulation": 2500, "maxPopulation": 6000,  "coverage": 1.25, "production": 2.2, "garrison": 6, "prosperityCap": 1.0 },
-        { "tier": 3, "name": "Стольний град", "minPopulation": 6000, "maxPopulation": 14000, "coverage": 1.50, "production": 3.8, "garrison": 9, "prosperityCap": 1.25 }
+        { "tier": 1, "name": "Містечко",       "minPopulation": 0,    "maxPopulation": 2500,  "coverage": 1.00, "production": 1.0, "garrison": 4, "prosperityCap": 320 },
+        { "tier": 2, "name": "Місто",         "sprite": "CityLarge", "minPopulation": 2500, "maxPopulation": 6000,  "coverage": 1.25, "production": 2.2, "garrison": 6, "prosperityCap": 480 },
+        { "tier": 3, "name": "Стольний град", "sprite": "CityGreat", "minPopulation": 6000, "maxPopulation": 14000, "coverage": 1.50, "production": 3.8, "garrison": 9, "prosperityCap": 700 }
       ]
     },
     {
@@ -36,8 +40,10 @@
       "canBeIndependent": false,
       "buildCost": { "money": 700, "wood": 200, "stone": 420, "food": 120 },
       "buildDays": 180,
+      "settlers": 260,
+      "settlerRange": 600.0,
       "tiers": [
-        { "tier": 1, "name": "Замок", "minPopulation": 0, "maxPopulation": 1200, "coverage": 0.75, "production": 0.0, "garrison": 8, "prosperityCap": 0.7 }
+        { "tier": 1, "name": "Замок", "minPopulation": 0, "maxPopulation": 1200, "coverage": 0.75, "production": 0.0, "garrison": 8, "prosperityCap": 200 }
       ]
     }
   ],
@@ -59,13 +65,19 @@
       "prosperityLoss": 0.35,
       "loyaltyLoss": 0.20,
       "populationLoss": 0.10,
+      "supplyPerPopulation": 0.00045,
+      "supplyCap": 0.35,
       "opinionPenalty": -25
     },
     "raze": {
       "name": "Знищити",
       "requiresKind": ["village"],
       "opinionPenalty": -45,
-      "lootMoneyPerPopulation": 0.2
+      "lootMoneyPerPopulation": 0.45,
+      "lootMoneyPerProsperity": 0.8,
+      "lootFoodPerPopulation": 0.30,
+      "lootWoodPerPopulation": 0.18,
+      "salvageShare": 0.35
     },
     "convert": {
       "name": "Навернути до віри",

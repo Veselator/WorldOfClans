@@ -1,4 +1,5 @@
 #include "SettlementFactory.h"
+#include "../Systems/CoverageSystem.h"
 #include "NamePool.h"
 #include "../World/World.h"
 #include "../World/RaceDatabase.h"
@@ -37,7 +38,8 @@ namespace woc
             }
         }
 
-        settlement.prosperity = std::clamp(db.StartingProsperity() * random.RangeF(0.8f, 1.2f), 0.05f, 1.0f);
+        settlement.prosperity = settlement.ProsperityCeiling() *
+            std::clamp(db.StartingProsperity() * random.RangeF(0.8f, 1.2f), 0.05f, 1.2f);
         settlement.loyalty = std::clamp(db.StartingLoyalty() * random.RangeF(0.9f, 1.1f), 0.05f, 1.0f);
 
         if (Clan* clan = world.FindClan(request.owner)) clan->AddSettlement(settlement.id);
@@ -45,7 +47,7 @@ namespace woc
     }
 
     bool SettlementFactory::CanPlace(const World& world, const MapData& map, SettlementKind kind,
-                                     const Vec2& position)
+                                     const Vec2& position, EntityId clanId)
     {
         if (position.x < 4.0f || position.y < 4.0f ||
             position.x >= static_cast<f32>(map.PixelWidth()) - 4.0f ||
@@ -68,11 +70,20 @@ namespace woc
                 : db.MinDistanceBetween() * db.MinDistanceBetween();
             if (DistanceSq(other.position, position) < required) return false;
         }
+
+        // A clan builds on its own ground and nowhere else. Whether that ground is its own
+        // is the coverage field's answer, so the borders a player can see are exactly the
+        // borders he can build inside.
+        if (clanId != kInvalidId && CoverageSystem::Get().OwnerAt(world, position) != clanId)
+        {
+            return false;
+        }
         return true;
     }
 
     bool SettlementFactory::FindSite(const World& world, const MapData& map, SettlementKind kind,
-                                     const Vec2& origin, f32 searchRadius, Random& random, Vec2& outPosition)
+                                     const Vec2& origin, f32 searchRadius, Random& random,
+                                     Vec2& outPosition, EntityId clanId)
     {
         // Sample rings outwards so new settlements hug their parent rather than teleporting.
         for (int attempt = 0; attempt < 160; ++attempt)
@@ -80,7 +91,7 @@ namespace woc
             const f32 angle = random.RangeF(0.0f, 2.0f * kPi);
             const f32 radius = searchRadius * std::sqrt(random.Unit());
             const Vec2 candidate{ origin.x + std::cos(angle) * radius, origin.y + std::sin(angle) * radius };
-            if (!CanPlace(world, map, kind, candidate)) continue;
+            if (!CanPlace(world, map, kind, candidate, clanId)) continue;
 
             outPosition = candidate;
             return true;

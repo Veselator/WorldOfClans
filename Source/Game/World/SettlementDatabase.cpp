@@ -12,6 +12,10 @@ namespace woc
         {
             if (name == "City") return SpriteId::City;
             if (name == "Castle") return SpriteId::Castle;
+            if (name == "VillageLarge") return SpriteId::VillageLarge;
+            if (name == "VillageGreat") return SpriteId::VillageGreat;
+            if (name == "CityLarge") return SpriteId::CityLarge;
+            if (name == "CityGreat") return SpriteId::CityGreat;
             return SpriteId::Village;
         }
     }
@@ -59,6 +63,8 @@ namespace woc
             info.canBeIndependent = entry["canBeIndependent"].AsBool(false);
             info.buildCost = ResourceData::FromJson(entry["buildCost"]);
             info.buildDays = entry["buildDays"].AsInt(60);
+            info.settlers = entry["settlers"].AsInt(200);
+            info.settlerRange = entry["settlerRange"].AsFloat(500.0f);
 
             for (const Json& tierNode : entry["tiers"].AsArray())
             {
@@ -71,6 +77,10 @@ namespace woc
                 tier.production = tierNode["production"].AsFloat(1.0f);
                 tier.garrison = tierNode["garrison"].AsInt(1);
                 tier.prosperityCap = tierNode["prosperityCap"].AsFloat(1.0f);
+                // Only a tier that names its own picture gets one; the rest fall back to
+                // the kind, which is what the sentinel means.
+                const std::string spriteName = tierNode["sprite"].AsString();
+                tier.sprite = spriteName.empty() ? SpriteId::Count : ParseSprite(spriteName);
                 info.tiers.push_back(std::move(tier));
             }
 

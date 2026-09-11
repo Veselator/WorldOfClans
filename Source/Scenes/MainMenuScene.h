@@ -3,6 +3,7 @@
 
 #include "IScene.h"
 #include "../Core/Math.h"
+#include "../Game/Map/MapData.h"
 #include "../Game/SaveGame.h"
 
 namespace woc
@@ -21,6 +22,15 @@ namespace woc
         void DrawBackdrop();
         void DrawMenu();
         void DrawLoadDialog();
+
+        /// Picks one of the installed maps at random and puts it behind the menu.
+        void LoadBackdropMap();
+        void UpdateBackdropCamera(f32 deltaTime);
+
+        MapData m_backdrop;
+        bool m_hasBackdrop = false;
+        f32 m_intro = 0.0f;        // 0..1, the opening push-in
+        f32 m_drift = 0.0f;        // how far the slow orbit has turned
 
         std::vector<SaveSlot> m_saves;
         bool m_loadOpen = false;

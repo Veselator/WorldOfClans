@@ -10,10 +10,13 @@
     "validation": false,
     "vsync": true,
     "forestTiling": 30.0,
-    "fieldTiling": 44.0,
+    "fieldTiling": 30.0,
+    "fieldOpacity": 1.0,
+    "fieldFullDensity": 0.12,
     "ownerTint": 0.22,
+    "thematicTint": 0.62,
     "borderWidth": 0.7,
-    "terrainMeshStep": 5,
+    "terrainMeshStep": 3,
     "terrainSmoothPasses": 4,
     "water": {
       "mapColor": "00fff6",
@@ -24,19 +27,47 @@
       "waveSpeed": 0.55,
       "glint": 0.14,
       "chop": 0.34,
-      "planeMargin": 8000.0
+      "planeMargin": 60000.0,
+      "foam": 0.8,
+      "foamWidth": 0.42,
+      "foamLace": 0.055,
+      "foamChurn": 0.9,
+      "foamReach": 3
     },
+    "minimap": {
+      "aspect": 0.5625,
+      "resolution": 200,
+      "refresh": 0.35,
+      "padTiles": 5.0,
+      "minExtent": 2200.0,
+      "tint": 0.62,
+      "rememberedDim": 0.52,
+      "seatSize": 4.0,
+      "armySize": 3.0
+    },
+    "roads": { "color": "6b4f2a", "bridgeColor": "9a7b4f", "opacity": 0.92, "width": 3.0, "edgeSoftness": 0.12 },
     "labels": {
       "minZoom": 1.3,
       "scale": 0.95,
       "offset": 6.0
     },
+    "battleShake": 1.6,
     "spriteScale": {
       "settlement": 26.0,
       "cohort": 20.0,
       "quarry": 18.0,
+      "tierGrowth": 0.14,
       "character": 16.0
-    }
+    },
+    "garrisonBadgeScale": 0.42,
+    "cohortBarMinZoom": 0.8,
+    "placeRingSize": 56.0,
+    "placePulseSpeed": 1.1,
+  "fog": { "color": "141b26", "exploredDim": 0.55, "scale": 0.0045, "contrast": 0.62, "memoryAlpha": 0.5, "blurTiles": 3 },
+    "cohortRaceScale": 0.5,
+    "cohortRaceLift": 0.48,
+    "cohortCountMinZoom": 0.7,
+    "cohortCountDrop": 0
   },
 
   "sprites": {
@@ -46,6 +77,47 @@
       "Human", "Elf", "Dwarf", "Cohort", "Village",
       "City", "Castle", "Circle", "Forest", "Quarry", "Field"
     ]
+  },
+
+  "editor": {
+    "boundsDashStep": 48.0,
+    "boundsThickness": 1.6
+  },
+
+  "fog": {
+    "refreshSeconds": 0.2,
+    "settlementSight": 190.0,
+    "castleSightBonus": 90.0,
+    "cohortSight": 150.0
+  },
+
+  "audio": {
+    "musicVolume": 0.45,
+    "sfxVolume": 0.8,
+
+    "//pitch": "\u041a\u043e\u0436\u0435\u043d \u0437\u0432\u0443\u043a \u0437\u0432\u0443\u0447\u0438\u0442\u044c \u0437 \u0432\u043b\u0430\u0441\u043d\u0438\u043c \u0432\u0456\u0434\u0445\u0438\u043b\u0435\u043d\u043d\u044f\u043c \u0432\u0438\u0441\u043e\u0442\u0438 \u0437 \u0446\u044c\u043e\u0433\u043e \u0434\u0456\u0430\u043f\u0430\u0437\u043e\u043d\u0443",
+    "pitchMin": 0.9,
+    "pitchMax": 1.12,
+    "fadeSeconds": 1.6,
+
+    "effects": {
+      "click": ["Fightstick_Click.wav", "Fightstick_Click_1.wav",
+                "Fightstick_Click_2.wav", "Fightstick_Click_3.wav"]
+    },
+
+    "music": {
+      "menu": ["MainMenu.mp3"],
+      "calm": ["GameCalm1.mp3", "GameCalm2.mp3", "GameCalm3.mp3"],
+      "war":  ["GameWar1.mp3", "GameWar2.mp3"]
+    }
+  },
+
+  "menu": {
+    "introSeconds": 2.6,
+    "introZoomFrom": 0.34,
+    "introZoomTo": 1.05,
+    "driftDegreesPerSecond": 1.6,
+    "driftRadius": 260.0
   },
 
   "camera": {
@@ -75,7 +147,7 @@
     "startYear": 912,
     "speedSteps": [0.0, 0.5, 1.0, 2.0, 4.0, 8.0],
     "defaultSpeedIndex": 2,
-    "economyTickDays": 30,
+    "economyTickDays": 14,
     "populationTickDays": 30,
     "forestryTickDays": 30,
     "aiTickDays": 15
@@ -94,15 +166,38 @@
 
   "map": {
     "fordableWaterRadius": 3,
+    "minimapWidth": 384,
     "colorMatchTolerance": 24
+  },
+
+  "market": {
+    "building": "market",
+    "basePrice": { "wood": 2.2, "stone": 4.5, "food": 1.6 },
+    "elasticity": 0.22,
+    "pressureScale": 45.0,
+    "priceFloor": 0.35,
+    "priceCeiling": 3.4,
+    "reachCap": 4.0,
+    "depth": 260.0,
+    "tradeImpact": 0.6,
+    "baseSpread": 0.18,
+    "minSpread": 0.04,
+    "maxSpread": 0.35,
+    "spreadProsperity": 0.06,
+    "spreadTier": 0.02,
+    "spreadHarbor": 0.04,
+    "spreadRoad": 0.03
   },
 
   "economy": {
     "moneyPerCityPopulation": 0.0125,
     "foodPerVillagePopulation": 0.02,
     "foodPerFieldTile": 0.045,
-    "woodPerForestTile": 0.0035,
-    "stonePerQuarry": 1.6,
+    "woodPerForestTile": 0.003675,
+    "stonePerQuarry": 1.92,
+    "stonePerDevelopedMine": 6.6,
+    "mineDevelopMoney": 240.0,
+    "mineDevelopWood": 120.0,
     "caravanBonusPerRoadLink": 0.18,
     "castleUpkeep": 4.0,
     "cityUpkeep": 3.0,
@@ -121,6 +216,7 @@
     "overcrowdingPenalty": 0.5,
     "migrantsPerMonthFactor": 0.004,
     "migrantsForNewVillage": 260,
+    "settlerFloor": 240,
     "newVillageMinDistance": 90.0,
     "newVillageMaxDistanceFromParent": 190.0,
     "prosperityDrift": 0.01,
@@ -128,7 +224,12 @@
     "loyaltyDistancePenalty": 0.00035,
     "loyaltyForeignRacePenalty": 0.18,
     "loyaltyForeignFaithPenalty": 0.12,
-    "revoltThreshold": 0.12,
+    "revoltThreshold": 0.35,
+    "revoltBaseChance": 0.02,
+    "revoltForeignRaceChance": 0.16,
+    "revoltForeignFaithChance": 0.06,
+    "revoltUncoveredFactor": 2.5,
+    "revoltGarrisonFactor": 0.2,
     "revoltCooldownDays": 720
   },
 
@@ -139,17 +240,48 @@
     "regrowthNeighbourThreshold": 0.25,
     "fieldGrowthPerMonth": 0.6,
     "fieldMaxRadius": 46.0,
-    "fieldRequiresSoil": 0.35
+    "fieldRequiresSoil": 0.35,
+    "fieldClearingPerMonth": 0.22
   },
 
   "movement": {
     "baseSpeed": 14.0,
     "roadSpeedMultiplier": 1.9,
     "moraleRecoveryPerDay": 0.05,
+    "organisationPerDay": 0.055,
+    "organisationMarchFactor": 0.35,
+    "organisationHomeBonus": 1.6,
+    "organisationSizeReference": 250.0,
+    "revoltAnswerRange": 900.0,
+    "splitOrganisationCost": 0.75,
     "fatiguePerDay": 0.02
   },
 
   "battle": {
+    "siegePace": { "openVillage": 2.2, "village": 0.26, "city": 0.05, "castle": 0.04 },
+    "siegeCost": { "village": 0.30, "city": 0.85, "castle": 1.25 },
+    "siegeKillShare": 0.35,
+    "minBitePerHead": 0.35,
+    "pursuitCostPerHead": 0.5,
+    "attritionComfortableSize": 300.0,
+    "attritionSizePenalty": 0.45,
+    "engagementRadius": 18.0,
+    "meleeKillShare": 0.4,
+    "pursuitDamage": 1.5,
+    "pursuitKillShare": 0.7,
+    "routDistance": 60.0,
+    "routOrganisation": 0.35,
+    "disengageDays": 3.0,
+    "withdrawPartingBlow": 0.8,
+    "withdrawKillShare": 0.5,
+    "withdrawDistance": 55.0,
+    "withdrawOrganisation": 0.25,
+    "woundedHealPerDay": 0.045,
+    "woundedDiePerDay": 0.006,
+    "woundedRestBonus": 2.0,
+    "attritionSupplyThreshold": 0.55,
+    "attritionPerDay": 0.012,
+    "attritionKillShare": 0.25,
     "roundsPerDay": 4,
     "baseDamage": 0.06,
     "terrainDefenseWeight": 0.6,
@@ -157,6 +289,8 @@
     "moraleBreakThreshold": 0.22,
     "moraleLossPerCasualty": 0.9,
     "experiencePerRound": 0.004,
+    "organisationPerRound": 0.06,
+    "organisationFloor": 0.45,
     "experienceCap": 1.0,
     "trainingWeight": 0.5,
     "aristocratCommandBonus": 0.15,
@@ -167,6 +301,7 @@
 
   "diplomacy": {
     "truceDays": 360,
+    "flareSeconds": 2.2,
     "allianceOpinionThreshold": 45,
     "warOpinionThreshold": -35,
     "marriageOpinionGain": 30,
@@ -188,14 +323,81 @@
     "deathAgeFactor": 0.0009
   },
 
+  "roads": {
+    "metresPerUnit": 12.0,
+
+    "moneyPerMetre": 0.04,
+    "stonePerMetre": 0.02,
+    "woodPerMetre": 0.01,
+
+    "bridgeMoneyPerMetre": 0.5,
+    "bridgeStonePerMetre": 0.3,
+    "bridgeWoodPerMetre": 0.5,
+
+    "daysPerKilometre": 7.0,
+    "bridgeDaysPerKilometre": 90.0,
+    "bridgeRouteCost": 9.0
+  },
+
   "ai": {
     "aggression": 0.55,
     "expansionWeight": 1.0,
     "defenceWeight": 1.2,
     "economyWeight": 0.9,
     "minGarrisonUnits": 2,
+    "resourceComfort": 18.0,
+    "scarcityFloor": 0.6,
+    "scarcityCeiling": 3.2,
     "recruitTreasuryReserve": 120.0,
-    "raidDistanceLimit": 900.0
+    "raidDistanceLimit": 900.0,
+
+    "profiles": [
+      {
+        "id": "defensive",
+        "name": "Оборонний",
+        "economyWeight": 1.1,
+        "defenceWeight": 1.9,
+        "expansionWeight": 0.6,
+        "minGarrisonUnits": 4,
+        "expansionIntervalDays": 260,
+        "requiredEdge": 1.8,
+        "reachBeyondBorder": 90.0,
+        "homeGarrisonShare": 0.75,
+        "allowRaiding": false,
+        "warAppetite": 0.04,
+        "warStrengthRatio": 2.2
+      },
+      {
+        "id": "cautious",
+        "name": "Обережний",
+        "economyWeight": 1.0,
+        "defenceWeight": 1.3,
+        "expansionWeight": 1.0,
+        "minGarrisonUnits": 2,
+        "expansionIntervalDays": 180,
+        "requiredEdge": 1.35,
+        "reachBeyondBorder": 260.0,
+        "homeGarrisonShare": 0.5,
+        "allowRaiding": true,
+        "warAppetite": 0.15,
+        "warStrengthRatio": 1.5
+      },
+      {
+        "id": "aggressive",
+        "name": "Войовничий",
+        "economyWeight": 0.7,
+        "defenceWeight": 0.8,
+        "expansionWeight": 1.4,
+        "minGarrisonUnits": 1,
+        "expansionIntervalDays": 130,
+        "requiredEdge": 0.95,
+        "reachBeyondBorder": 620.0,
+        "homeGarrisonShare": 0.25,
+        "allowRaiding": true,
+        "warAppetite": 0.45,
+        "warStrengthRatio": 1.05
+      }
+    ]
   },
 
   "clanColors": [

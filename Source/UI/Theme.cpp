@@ -3,6 +3,9 @@
 
 #include <cstdlib>
 
+#include <algorithm>
+#include <cmath>
+
 namespace woc
 {
     namespace
@@ -54,6 +57,24 @@ namespace woc
         {
             m_labels[key] = value.AsString(key);
         }
+    }
+
+    void Theme::SetScale(f32 scale)
+    {
+        m_scale = std::clamp(scale, 0.6f, 2.0f);
+
+        // Re-read first, so scaling is always applied to the designed sizes rather than
+        // compounding on top of the last scale.
+        Load();
+
+        for (f32* metric : { &padding, &rowHeight, &headerHeight, &buttonHeight,
+                             &sidebarWidth, &topBarHeight, &bottomBarHeight,
+                             &tooltipMaxWidth, &scrollSpeed })
+        {
+            *metric = std::round(*metric * m_scale);
+        }
+        // Not the border: a hairline is a hairline at any size, and rounding it up makes
+        // the whole interface look heavy-handed.
     }
 
     const std::string& Theme::Label(const std::string& key) const

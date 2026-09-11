@@ -1,4 +1,5 @@
 #include "MapData.h"
+#include "../../Core/Config.h"
 #include "../../Core/Log.h"
 
 #include <algorithm>
@@ -14,6 +15,37 @@ namespace woc
         m_tileWidth = std::max(1u, pixelWidth / m_tilePixels);
         m_tileHeight = std::max(1u, pixelHeight / m_tilePixels);
         m_tiles.assign(static_cast<size_t>(m_tileWidth) * m_tileHeight, Tile{});
+    }
+
+    void MapData::Resize(u32 pixelWidth, u32 pixelHeight, u8 fill)
+    {
+        const u32 tilePixels = m_tilePixels;
+        const u32 newTileWidth = std::max(1u, pixelWidth / tilePixels);
+        const u32 newTileHeight = std::max(1u, pixelHeight / tilePixels);
+        if (newTileWidth == m_tileWidth && newTileHeight == m_tileHeight) return;
+
+        // The old map is kept where the two overlap, anchored at the top-left corner: a
+        // designer who widens a map expects to find his coastline where he left it.
+        std::vector<Tile> fresh(static_cast<size_t>(newTileWidth) * newTileHeight);
+        for (Tile& tile : fresh) tile.terrain = fill;
+
+        const u32 copyWidth = std::min(newTileWidth, m_tileWidth);
+        const u32 copyHeight = std::min(newTileHeight, m_tileHeight);
+        for (u32 y = 0; y < copyHeight; ++y)
+        {
+            for (u32 x = 0; x < copyWidth; ++x)
+            {
+                fresh[static_cast<size_t>(y) * newTileWidth + x] =
+                    m_tiles[static_cast<size_t>(y) * m_tileWidth + x];
+            }
+        }
+
+        m_tiles = std::move(fresh);
+        m_tileWidth = newTileWidth;
+        m_tileHeight = newTileHeight;
+        m_pixelWidth = newTileWidth * tilePixels;
+        m_pixelHeight = newTileHeight * tilePixels;
+        m_colorPixels.assign(static_cast<size_t>(m_pixelWidth) * m_pixelHeight * 4, 255);
     }
 
     Coord MapData::ToTile(const Vec2& mapPosition) const
@@ -81,12 +113,13 @@ namespace woc
     {
         const TerrainDatabase& terrain = TerrainDatabase::Get();
 
-        // Raw combination first: the painted height map dominates, the terrain type
-        // contributes its own base so hills read as hills even on a flat height map.
+        // Height comes from the height map and from nowhere else. The terrain type used to
+        // contribute its own base here, which meant that repainting a plain as hillside
+        // silently lifted the ground - two tools quietly doing each other's work. Water is
+        // the one exception: it is always at the datum, whatever was painted underneath.
         for (Tile& tile : m_tiles)
         {
-            const TerrainInfo& info = terrain.At(tile.terrain);
-            tile.elevation = info.water ? 0.0f : (tile.height * 0.72f + info.heightFactor * 0.28f);
+            tile.elevation = terrain.At(tile.terrain).water ? 0.0f : tile.height;
         }
 
         if (smoothPasses <= 0) return;
@@ -258,6 +291,181 @@ namespace woc
         return mask;
     }
 
+    ImageData MapData::BuildMinimapImage(u32 width) const
+    {
+        ImageData out;
+        if (!IsValid() || width == 0 || m_colorPixels.empty()) return out;
+
+        out.width = width;
+        out.height = std::max(1u, static_cast<u32>(std::lround(
+            static_cast<f64>(width) * m_pixelHeight / m_pixelWidth)));
+        out.channels = 4;
+        out.pixels.assign(static_cast<size_t>(out.width) * out.height * 4, 255);
+
+        const TerrainDatabase& terrain = TerrainDatabase::Get();
+
+        // The sea as the game paints it, not as the colour layer keys it.
+        ConfigManager& config = ConfigManager::Get();
+        const Color deep = Color::FromRGB(static_cast<u32>(
+            std::strtoul(config.Str("render/water/deepColor", "0b6d88").c_str(), nullptr, 16)));
+        const Color shallowSea = Color::FromRGB(static_cast<u32>(
+            std::strtoul(config.Str("render/water/shallowColor", "1ad8cf").c_str(), nullptr, 16)));
+        const f32 deepR = deep.r, deepG = deep.g, deepB = deep.b;
+        const f32 shallowR = shallowSea.r, shallowG = shallowSea.g, shallowB = shallowSea.b;
+
+        // How far each stretch of water is from the shore, so the shallows read lighter.
+        const std::vector<u8> shore = BuildShoreMask(6);
+
+        // One output texel covers a block of map pixels, and every one of them is read:
+        // point-sampling a 1920-wide layer down to 384 throws away five pixels in six and
+        // turns a coastline into a dotted line.
+        const f32 stepX = static_cast<f32>(m_pixelWidth) / out.width;
+        const f32 stepY = static_cast<f32>(m_pixelHeight) / out.height;
+
+        for (u32 py = 0; py < out.height; ++py)
+        {
+            const u32 y0 = static_cast<u32>(py * stepY);
+            const u32 y1 = std::min(m_pixelHeight, static_cast<u32>((py + 1) * stepY) + 1);
+
+            for (u32 px = 0; px < out.width; ++px)
+            {
+                const u32 x0 = static_cast<u32>(px * stepX);
+                const u32 x1 = std::min(m_pixelWidth, static_cast<u32>((px + 1) * stepX) + 1);
+
+                u32 r = 0, g = 0, b = 0, count = 0;
+                for (u32 y = y0; y < y1; ++y)
+                {
+                    const u8* row = &m_colorPixels[(static_cast<size_t>(y) * m_pixelWidth + x0) * 4];
+                    for (u32 x = x0; x < x1; ++x, row += 4)
+                    {
+                        r += row[0]; g += row[1]; b += row[2]; ++count;
+                    }
+                }
+                if (count == 0) continue;
+
+                f32 cr = static_cast<f32>(r) / count / 255.0f;
+                f32 cg = static_cast<f32>(g) / count / 255.0f;
+                f32 cb = static_cast<f32>(b) / count / 255.0f;
+
+                // The tile under the middle of the block carries the things the colour layer
+                // does not: the woods, and which way the ground falls.
+                const Coord tile{ static_cast<i32>((x0 + x1) / 2) / static_cast<i32>(m_tilePixels),
+                                  static_cast<i32>((y0 + y1) / 2) / static_cast<i32>(m_tilePixels) };
+                const Tile& here = AtClamped(tile);
+                const size_t tileIndex = static_cast<size_t>(std::clamp(tile.y, 0, static_cast<i32>(m_tileHeight) - 1)) * m_tileWidth +
+                                         static_cast<size_t>(std::clamp(tile.x, 0, static_cast<i32>(m_tileWidth) - 1));
+                const i32 shoreDepth = tileIndex < shore.size() && shore[tileIndex] > 0
+                                     ? static_cast<i32>((255 - shore[tileIndex]) / 36) : 6;
+
+                if (here.forest > 0.02f)
+                {
+                    const f32 k = std::min(here.forest * 0.75f, 0.6f);
+                    cr += (0.12f - cr) * k;
+                    cg += (0.26f - cg) * k;
+                    cb += (0.10f - cb) * k;
+                }
+
+                if (terrain.At(here.terrain).water)
+                {
+                    // The colour layer paints the sea in the flat key colour the renderer
+                    // matches on, which is not a colour anybody should have to look at. The
+                    // portrait shows the sea the game actually draws, shallower by the shore.
+                    const f32 shallow = Clamp01(1.0f - static_cast<f32>(shoreDepth) / 6.0f);
+                    cr = deepR + (shallowR - deepR) * shallow;
+                    cg = deepG + (shallowG - deepG) * shallow;
+                    cb = deepB + (shallowB - deepB) * shallow;
+                }
+                else
+                {
+                    // A cheap north-west light: the slope between this tile and the one up
+                    // and to the left is enough to make ranges legible at thumbnail size.
+                    const f32 drop = here.elevation -
+                                     AtClamped({ tile.x - 1, tile.y - 1 }).elevation;
+                    const f32 shade = std::clamp(1.0f + drop * 3.2f, 0.72f, 1.28f);
+                    cr *= shade; cg *= shade; cb *= shade;
+                }
+
+                u8* texel = out.At(px, py);
+                texel[0] = static_cast<u8>(Clamp01(cr) * 255.0f);
+                texel[1] = static_cast<u8>(Clamp01(cg) * 255.0f);
+                texel[2] = static_cast<u8>(Clamp01(cb) * 255.0f);
+                texel[3] = 255;
+            }
+        }
+        return out;
+    }
+
+    std::vector<u8> MapData::BuildShoreMask(i32 reach) const
+    {
+        const TerrainDatabase& terrain = TerrainDatabase::Get();
+        std::vector<u8> mask(m_tiles.size(), 0);
+        if (reach <= 0 || m_tiles.empty()) return mask;
+
+        const i32 width = static_cast<i32>(m_tileWidth);
+        const i32 height = static_cast<i32>(m_tileHeight);
+        static const i32 kSteps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+
+        // The seed is the waterline itself - every tile with a neighbour of the opposite
+        // wetness - and the sweep then runs outwards from it into the sea and into the land
+        // alike, so one mask describes both halves of the band.
+        std::vector<i32> distance(m_tiles.size(), -1);
+        std::vector<u32> frontier;
+        for (i32 y = 0; y < height; ++y)
+        {
+            for (i32 x = 0; x < width; ++x)
+            {
+                const size_t index = static_cast<size_t>(y) * m_tileWidth + x;
+                const bool wet = terrain.At(m_tiles[index].terrain).water;
+
+                bool onCoast = false;
+                for (const auto& offset : kSteps)
+                {
+                    const i32 nx = x + offset[0];
+                    const i32 ny = y + offset[1];
+                    if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                    const size_t neighbour = static_cast<size_t>(ny) * m_tileWidth + nx;
+                    if (terrain.At(m_tiles[neighbour].terrain).water != wet) { onCoast = true; break; }
+                }
+                if (!onCoast) continue;
+
+                distance[index] = 0;
+                frontier.push_back(static_cast<u32>(index));
+            }
+        }
+
+        for (i32 step = 1; step <= reach && !frontier.empty(); ++step)
+        {
+            std::vector<u32> next;
+            for (u32 index : frontier)
+            {
+                const i32 x = static_cast<i32>(index) % width;
+                const i32 y = static_cast<i32>(index) / width;
+                for (const auto& offset : kSteps)
+                {
+                    const i32 nx = x + offset[0];
+                    const i32 ny = y + offset[1];
+                    if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+
+                    const size_t neighbour = static_cast<size_t>(ny) * m_tileWidth + nx;
+                    if (distance[neighbour] >= 0) continue;
+
+                    distance[neighbour] = step;
+                    next.push_back(static_cast<u32>(neighbour));
+
+                }
+            }
+            frontier.swap(next);
+        }
+
+        for (size_t i = 0; i < m_tiles.size(); ++i)
+        {
+            if (distance[i] < 0) continue;   // too far from any coast to matter
+            const f32 strength = 1.0f - static_cast<f32>(distance[i]) / static_cast<f32>(reach + 1);
+            mask[i] = static_cast<u8>(Clamp01(strength) * 255.0f);
+        }
+        return mask;
+    }
+
     std::vector<u8> MapData::BuildOwnerMask() const
     {
         std::vector<u8> mask(m_tiles.size());
@@ -267,7 +475,7 @@ namespace woc
 
     void MapData::ClearOwners()
     {
-        for (Tile& tile : m_tiles) tile.owner = 0;
+        for (Tile& tile : m_tiles) { tile.owner = 0; tile.holder = 0; }
     }
 
     void MapData::ComputeFordableWater(i32 fordRadius)

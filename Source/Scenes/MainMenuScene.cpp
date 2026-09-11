@@ -1,25 +1,95 @@
 #include "MainMenuScene.h"
 #include "SceneManager.h"
+#include "../Audio/AudioSystem.h"
 #include "../Core/Config.h"
+#include "../Core/Log.h"
+#include "../Core/Random.h"
+#include "../Game/Map/MapLoader.h"
+#include "../Game/WorldGenerator.h"
 #include "../Render/Renderer.h"
 #include "../UI/UI.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace woc
 {
     void MainMenuScene::OnEnter()
     {
-        Renderer::Get().SetTerrainEnabled(false);
         Renderer::Get().SetClearColor(Theme::Get().background);
+        Renderer::Get().SetFogEnabled(false);
+        AudioSystem::Get().SetMood(MusicMood::Menu);
         m_saves = SaveGame::List();
         m_loadOpen = false;
         m_selectedSave = m_saves.empty() ? -1 : 0;
+
+        // The menu sits over a real map rather than over a flat colour, and the map is a
+        // different one each time. Loading it once here keeps the title screen free.
+        m_intro = 0.0f;
+        m_drift = GlobalRandom().RangeF(0.0f, 360.0f);
+        LoadBackdropMap();
+    }
+
+    void MainMenuScene::LoadBackdropMap()
+    {
+        m_hasBackdrop = false;
+
+        const std::vector<MapDescription> maps = MapLoader::ListMaps();
+        if (maps.empty())
+        {
+            Renderer::Get().SetTerrainEnabled(false);
+            return;
+        }
+
+        const size_t pick = static_cast<size_t>(
+            GlobalRandom().Range(0, static_cast<i32>(maps.size()) - 1));
+
+        MapDescription description;
+        if (!MapLoader::Load(maps[pick].folder, m_backdrop, description))
+        {
+            WOC_LOG_WARN("Could not load '", maps[pick].folder, "' for the title screen");
+            Renderer::Get().SetTerrainEnabled(false);
+            return;
+        }
+
+        WorldGenerator::PublishMapToRenderer(m_backdrop);
+        Renderer::Get().SetTerrainEnabled(true);
+        Renderer::Get().SetBordersVisible(false);
+        m_hasBackdrop = true;
+    }
+
+    void MainMenuScene::UpdateBackdropCamera(f32 deltaTime)
+    {
+        if (!m_hasBackdrop) return;
+
+        ConfigManager& config = ConfigManager::Get();
+        Camera& camera = Renderer::Get().GetCamera();
+
+        // The push-in: the land starts far off and settles into place. Ease out, so the
+        // movement is quick at first and barely creeps by the time the menu is readable.
+        const f32 duration = config.Float("menu/introSeconds", 2.6f);
+        m_intro = std::min(1.0f, m_intro + deltaTime / std::max(0.1f, duration));
+        const f32 eased = 1.0f - std::pow(1.0f - m_intro, 3.0f);
+
+        const f32 from = config.Float("menu/introZoomFrom", 0.34f);
+        const f32 to = config.Float("menu/introZoomTo", 1.05f);
+        camera.SetZoom(from + (to - from) * eased);
+
+        // ...and then it keeps turning, slowly, so the screen is never quite still.
+        m_drift += deltaTime * config.Float("menu/driftDegreesPerSecond", 1.6f);
+        camera.SetYawDegrees(m_drift);
+
+        const f32 radius = config.Float("menu/driftRadius", 260.0f);
+        const f32 angle = m_drift * kDeg2Rad * 0.6f;
+        camera.SetFocus({ m_backdrop.PixelWidth() * 0.5f + std::cos(angle) * radius,
+                          m_backdrop.PixelHeight() * 0.5f + std::sin(angle) * radius });
+        camera.ClampToBounds();
     }
 
     void MainMenuScene::Update(f32 deltaTime)
     {
         m_time += deltaTime;
+        UpdateBackdropCamera(deltaTime);
     }
 
     void MainMenuScene::Render()
@@ -35,7 +105,16 @@ namespace woc
         const Theme& theme = Theme::Get();
         const Vec2 viewport = renderer.ViewportSize();
 
-        // A slow drift of banner folk keeps the title screen from feeling dead.
+        // With a map behind the menu the drifting folk would only be clutter; they stay
+        // as the fallback for an installation with no maps in it at all.
+        if (m_hasBackdrop)
+        {
+            // A dark veil over the land so the panel stays readable at any time of day.
+            renderer.UIRect({ 0.0f, 0.0f, viewport.x, viewport.y },
+                            theme.background.WithAlpha(0.45f));
+            return;
+        }
+
         for (int i = 0; i < 24; ++i)
         {
             const f32 phase = m_time * 12.0f + static_cast<f32>(i) * 137.0f;

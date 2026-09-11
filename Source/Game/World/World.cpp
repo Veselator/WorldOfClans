@@ -128,6 +128,11 @@ namespace woc
         return nullptr;
     }
 
+    const MineSite* World::FindMine(EntityId id) const
+    {
+        return const_cast<World*>(this)->FindMine(id);
+    }
+
     // --- destruction ------------------------------------------------------------------------
 
     void World::DestroyUnit(EntityId id)
@@ -136,6 +141,7 @@ namespace woc
         if (!unit) return;
 
         for (EntityId characterId : unit->characters) m_characters.erase(characterId);
+        for (EntityId characterId : unit->wounded) m_characters.erase(characterId);
         if (Cohort* cohort = FindCohort(unit->cohort))
         {
             cohort->units.erase(std::remove(cohort->units.begin(), cohort->units.end(), id),
@@ -201,6 +207,57 @@ namespace woc
     {
         Cohort* cohort = FindCohort(cohortId);
         return cohort ? FindClan(cohort->clan) : nullptr;
+    }
+
+    const Settlement* World::CapitalOf(EntityId stateId) const
+    {
+        const State* state = FindState(stateId);
+        if (!state) return nullptr;
+
+        const Settlement* best = nullptr;
+        i32 bestPopulation = -1;
+        for (EntityId clanId : state->clans)
+        {
+            const Clan* clan = FindClan(clanId);
+            if (!clan) continue;
+            for (EntityId settlementId : clan->settlements)
+            {
+                const Settlement* settlement = FindSettlement(settlementId);
+                if (!settlement) continue;
+
+                // A city outranks anything smaller whatever its head count.
+                const i32 weight = settlement->population +
+                    (settlement->kind == SettlementKind::City ? 100000 : 0) +
+                    (settlement->kind == SettlementKind::Castle ? 50000 : 0);
+                if (weight > bestPopulation) { bestPopulation = weight; best = settlement; }
+            }
+        }
+        return best;
+    }
+
+    void World::Announce(const std::string& headline, const std::string& detail, const Color& color)
+    {
+        const f32 duration = ConfigManager::Get().Float("diplomacy/heraldSeconds", 5.0f);
+        m_heralds.push_back({ headline, detail, color, duration, duration });
+    }
+
+    void World::Flare(EntityId stateA, EntityId stateB, const Color& color)
+    {
+        const Settlement* a = CapitalOf(stateA);
+        const Settlement* b = CapitalOf(stateB);
+        if (!a || !b || a->id == b->id) return;
+
+        const f32 duration = ConfigManager::Get().Float("diplomacy/flareSeconds", 2.2f);
+        m_flares.push_back({ a->position, b->position, color, duration, duration });
+    }
+
+    bool World::MayAttackSettlement(EntityId clanId, EntityId settlementId) const
+    {
+        const Settlement* settlement = FindSettlement(settlementId);
+        if (!settlement) return false;
+        if (settlement->owner == clanId) return false;
+        if (settlement->owner == kInvalidId) return true;   // nobody's land, nobody's peace
+        return AreHostile(clanId, settlement->owner);
     }
 
     bool World::AreHostile(EntityId clanA, EntityId clanB) const
@@ -355,6 +412,8 @@ namespace woc
             node["richness"] = mine.richness;
             node["owner"] = EncodeId(mine.owner);
             node["developed"] = mine.developed;
+            node["daysLeft"] = mine.daysRemaining;
+            node["daysTotal"] = mine.daysTotal;
             mines.Push(node);
         }
         root["mines"] = mines;
@@ -473,6 +532,8 @@ namespace woc
             mine.richness = entry["richness"].AsFloat(1.0f);
             mine.owner = DecodeId(entry["owner"]);
             mine.developed = entry["developed"].AsBool(false);
+            mine.daysRemaining = entry["daysLeft"].AsFloat(0.0f);
+            mine.daysTotal = entry["daysTotal"].AsFloat(0.0f);
             track(mine.id);
             m_mines.push_back(mine);
         }

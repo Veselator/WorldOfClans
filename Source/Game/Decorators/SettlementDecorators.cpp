@@ -70,7 +70,7 @@ namespace woc
         }
 
         // Prosperity and loyalty scale everything a settlement does.
-        output *= 0.55f + Clamp01(m_settlement.prosperity) * 0.85f;
+        output *= 0.55f + m_settlement.ProsperityFraction() * 0.85f;
         output *= 0.6f + Clamp01(m_settlement.loyalty) * 0.4f;
         return std::max(0.0f, output);
     }
@@ -101,7 +101,7 @@ namespace woc
         const RaceInfo& race = RaceDatabase::Get().Race(m_settlement.raceId);
 
         f32 drift = config.Float("population/loyaltyDrift", 0.012f) * race.modifiers.loyalty;
-        drift *= 0.4f + Clamp01(m_settlement.prosperity);
+        drift *= 0.4f + m_settlement.ProsperityFraction();
         return drift;
     }
 

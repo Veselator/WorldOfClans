@@ -23,6 +23,7 @@ namespace woc
             switch (tool)
             {
             case EditorTool::Terrain:    return "Ландшафт";
+            case EditorTool::Height:     return "Висота";
             case EditorTool::Forest:     return "Ліс";
             case EditorTool::Field:      return "Поля";
             case EditorTool::Road:       return "Дороги";
@@ -39,6 +40,7 @@ namespace woc
             switch (tool)
             {
             case EditorTool::Terrain:    return "ЛКМ — замалювати вибраним типом місцевості";
+            case EditorTool::Height:     return "ЛКМ — підняти ґрунт, ПКМ — опустити (або вирівняти до заданої висоти)";
             case EditorTool::Forest:     return "ЛКМ — засадити ліс, ПКМ — вирубати";
             case EditorTool::Field:      return "ЛКМ — зорати, ПКМ — закинути";
             case EditorTool::Road:       return "ЛКМ — прокласти дорогу, ПКМ — зняти";
@@ -94,16 +96,17 @@ namespace woc
         };
 
         // Tool picker, two per line.
-        for (int i = 0; i < 8; i += 2)
+        for (int i = 0; i < kEditorToolCount; i += 2)
         {
             const Rect line = row(26.0f);
             const Rect left{ line.x, line.y, line.w * 0.5f - 3.0f, line.h };
             const Rect right{ line.x + line.w * 0.5f + 3.0f, line.y, line.w * 0.5f - 3.0f, line.h };
 
             const EditorTool a = static_cast<EditorTool>(i);
-            const EditorTool b = static_cast<EditorTool>(i + 1);
-
             if (ui.ListItem(left, ToolName(a), m_tool == a)) m_tool = a;
+
+            if (i + 1 >= kEditorToolCount) continue;
+            const EditorTool b = static_cast<EditorTool>(i + 1);
             if (ui.ListItem(right, ToolName(b), m_tool == b)) m_tool = b;
         }
 
@@ -112,11 +115,36 @@ namespace woc
         y += 8.0f;
 
         // --- brush -------------------------------------------------------------------------------
-        if (m_tool == EditorTool::Terrain || m_tool == EditorTool::Forest ||
-            m_tool == EditorTool::Field || m_tool == EditorTool::Road)
+        if (m_tool == EditorTool::Terrain || m_tool == EditorTool::Height ||
+            m_tool == EditorTool::Forest || m_tool == EditorTool::Field ||
+            m_tool == EditorTool::Road)
         {
             ui.Stepper(row(24.0f), "Радіус", m_brushRadius, 4, 200);
             ui.Slider(row(24.0f), "Сила", m_brushStrength, 0.05f, 1.0f);
+        }
+
+        if (m_tool == EditorTool::Height)
+        {
+            ui.Label(row(20.0f), "ЯК ПРАЦЮЄ", theme.accent);
+
+            const Rect sculpt = row(22.0f);
+            if (ui.ListItem(sculpt, "Ліпити", m_heightMode == HeightMode::Sculpt))
+            {
+                m_heightMode = HeightMode::Sculpt;
+            }
+            ui.TooltipIfHovered(sculpt, "ЛКМ піднімає ґрунт, ПКМ опускає — поступово, із заданою силою.");
+
+            const Rect level = row(22.0f);
+            if (ui.ListItem(level, "Вирівняти", m_heightMode == HeightMode::Level))
+            {
+                m_heightMode = HeightMode::Level;
+            }
+            ui.TooltipIfHovered(level, "Тягне ґрунт до заданої висоти — для плато, долин і озерних чаш.");
+
+            if (m_heightMode == HeightMode::Level)
+            {
+                ui.Slider(row(24.0f), "Висота", m_heightTarget, 0.0f, 1.0f);
+            }
         }
 
         if (m_tool == EditorTool::Terrain)
@@ -170,9 +198,22 @@ namespace woc
         y += 8.0f;
         ui.Label(row(20.0f), "ГЕНЕРАЦІЯ", theme.accent);
 
-        // A seed is a number you type, not one you nudge one step at a time.
+        // Either the designer names a seed, or the generator draws one and writes it back
+        // into the field, so a world that turns out well can always be found again.
+        const Rect randomRow = row(24.0f);
+        ui.Toggle(randomRow, "Випадкове зерно", m_randomSeed);
+        ui.TooltipIfHovered(randomRow, "Зерно вибереться саме, і його буде вписано в поле нижче.");
+
         ui.Label(row(18.0f), "Зерно", theme.textDim);
-        if (ui.TextField(row(24.0f), "genSeed", m_seedText, 10))
+        if (m_randomSeed)
+        {
+            const Rect r = row(24.0f);
+            renderer.UIRect(r, theme.panelAlt.Scaled(0.8f));
+            renderer.UIRectOutline(r, theme.border, 1.0f);
+            renderer.UIText(m_seedText, { r.x + 6.0f, r.y + (r.h - renderer.TextHeight()) * 0.5f },
+                            theme.textDim);
+        }
+        else if (ui.TextField(row(24.0f), "genSeed", m_seedText, 10))
         {
             m_genSeed = std::max(1, std::atoi(m_seedText.c_str()));
         }
@@ -183,27 +224,34 @@ namespace woc
 
         if (ui.Button(row(28.0f), "Згенерувати ландшафт")) GenerateTerrain();
 
+        // --- the size of the map that is open ----------------------------------------------------
         y += 6.0f;
-        ui.Label(row(20.0f), "ЗБЕРЕЖЕННЯ", theme.accent);
-        ui.Label(row(18.0f), "Назва", theme.textDim);
-        ui.TextField(row(24.0f), "mapName", m_mapName, 40);
-        ui.Label(row(18.0f), "Тека (Maps/...)", theme.textDim);
-        ui.TextField(row(24.0f), "mapFolder", m_folderName, 32);
+        renderer.UIRect({ innerX, y, innerW, 1.0f }, theme.border);
+        y += 8.0f;
+        ui.Label(row(20.0f), "РОЗМІР КАРТИ", theme.accent);
 
-        // --- existing maps -----------------------------------------------------------------------------
-        y += 6.0f;
-        ui.Label(row(20.0f), "ВІДКРИТИ", theme.accent);
-        const Rect listArea{ innerX, y, innerW, std::max(60.0f, panel.Bottom() - y - theme.padding) };
-        const Rect content = ui.BeginScroll(listArea, m_maps.size() * 24.0f, m_listScroll);
-        for (size_t i = 0; i < m_maps.size(); ++i)
+        ui.Stepper(row(24.0f), "Ширина", m_genWidth, 256, 8192);
+        ui.Stepper(row(24.0f), "Висота", m_genHeight, 256, 8192);
+
         {
-            const Rect r{ content.x, content.y + i * 24.0f, content.w, 22.0f };
-            if (ui.ListItem(r, m_maps[i].name, m_maps[i].folder == m_folderName))
-            {
-                LoadMap(m_maps[i].folder);
-            }
+            const Rect r = row(28.0f);
+            const MapData& map = World::Get().Map();
+            const bool changed = static_cast<u32>(m_genWidth) != map.PixelWidth() ||
+                                 static_cast<u32>(m_genHeight) != map.PixelHeight();
+            if (ui.Button(r, "Змінити розмір", changed)) ResizeMap();
+            ui.TooltipIfHovered(r, changed
+                ? "Намальоване лишиться на місці; зайве обріжеться, нове заллється водою."
+                : "Карта вже такого розміру.");
         }
-        ui.EndScroll();
+
+        // --- saving ------------------------------------------------------------------------------------
+        y += 6.0f;
+        renderer.UIRect({ innerX, y, innerW, 1.0f }, theme.border);
+        y += 8.0f;
+        if (ui.Button(row(30.0f), "Зберегти карту")) SaveMap();
+        ui.Label(row(18.0f), "Maps/" + m_folderName, theme.textDim);
+
+        if (ui.Button(row(28.0f), "Список карт...")) { m_browserOpen = true; m_browserScroll = 0.0f; }
     }
 
     void EditorScene::DrawInspector()
@@ -242,7 +290,7 @@ namespace woc
         ui.Label(row(), "ПІД КУРСОРОМ", theme.accent);
         if (!ui.WantsMouse())
         {
-            const Vec2 mapPosition = renderer.GetCamera().ScreenToMap(Input::Get().MousePosition());
+            const Vec2 mapPosition = ScreenToTerrain(Input::Get().MousePosition());
             if (mapPosition.x >= 0.0f && mapPosition.y >= 0.0f &&
                 mapPosition.x < static_cast<f32>(map.PixelWidth()) &&
                 mapPosition.y < static_cast<f32>(map.PixelHeight()))
@@ -289,7 +337,7 @@ namespace woc
                 {
                     settlement->population = hundreds * 100;
                 }
-                ui.Slider(row(), "Процвітання", settlement->prosperity, 0.0f, 1.0f);
+                ui.Slider(row(), "Процвітання", settlement->prosperity, 0.0f, settlement->ProsperityCeiling());
                 ui.Slider(row(), "Вірність", settlement->loyalty, 0.0f, 1.0f);
 
                 y += 4.0f;
@@ -311,7 +359,7 @@ namespace woc
         y = std::max(y, panel.Bottom() - 96.0f);
         renderer.UIRect({ line.x, y, line.w, 1.0f }, theme.border);
         y += 8.0f;
-        renderer.UIText("WASD — камера, колесо — масштаб", { line.x, y }, theme.textDim);
+        renderer.UIText("WASD — камера, Q/E — поворот, R — скинути", { line.x, y }, theme.textDim);
         y += renderer.TextHeight() + 3.0f;
         renderer.UIText("Esc — вийти в меню", { line.x, y }, theme.textDim);
         y += renderer.TextHeight() + 3.0f;

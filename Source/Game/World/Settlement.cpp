@@ -12,6 +12,16 @@ namespace woc
         return info.tiers[info.TierForPopulation(population)];
     }
 
+    f32 Settlement::ProsperityCeiling() const
+    {
+        return std::max(1.0f, Tier().prosperityCap);
+    }
+
+    f32 Settlement::ProsperityFraction() const
+    {
+        return Clamp01(prosperity / ProsperityCeiling());
+    }
+
     std::string Settlement::TierName() const
     {
         const SettlementTier& tier = Tier();
@@ -82,7 +92,7 @@ namespace woc
         settlement.raceId = node["race"].AsString("human");
         settlement.faithId = node["faith"].AsString("perun");
         settlement.population = node["population"].AsInt(200);
-        settlement.prosperity = node["prosperity"].AsFloat(0.5f);
+        settlement.prosperity = node["prosperity"].AsFloat(60.0f);
         settlement.loyalty = node["loyalty"].AsFloat(0.75f);
         settlement.quarryRevealed = node["quarryRevealed"].AsBool(false);
         settlement.rebelliousUntilDay = node["rebelliousUntilDay"].AsInt(0);

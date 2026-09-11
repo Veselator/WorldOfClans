@@ -3,6 +3,8 @@
 
 #include "../Core/Math.h"
 
+#include <vector>
+
 namespace woc
 {
     /// Named slots inside WoCVisual.png. The concrete tile indices come from
@@ -20,6 +22,12 @@ namespace woc
         Forest,
         Quarry,
         Field,
+        // Second row of the sheet: what a village and a city look like once they have
+        // outgrown the hamlet they started as.
+        VillageLarge,
+        VillageGreat,
+        CityLarge,
+        CityGreat,
         Count
     };
 
@@ -52,6 +60,12 @@ namespace woc
     {
         Solid = 0,
         Glyph = 1,
-        Sprite = 2
+        Sprite = 2,
+        /// The minimap's own picture: a full RGBA image with no cut-out, drawn from a
+        /// texture the scene rebuilds rather than from the shared atlas.
+        Minimap = 3,
+        /// An arbitrary picture a scene has handed the renderer - a map's baked portrait,
+        /// say. Drawn exactly like the minimap; the range carries which one.
+        Image = 4
     };
 }

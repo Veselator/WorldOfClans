@@ -36,14 +36,32 @@ namespace woc
         bool vsync = true;
 
         // --- camera ---------------------------------------------------------------------
-        f32 cameraPitch = 46.0f;
+        /// The pitch is deliberately not here. The whole look of the map - how the sprites
+        /// sit on the ground, where the labels land, how far the horizon is - is built
+        /// around one angle, and letting it be dragged about only lets the player break it.
+        /// It comes from camera/pitchDegrees in game.json and stays there.
         f32 rotateSpeed = 90.0f;
         f32 edgeScroll = 8.0f;
 
         // --- world display ---------------------------------------------------------------
+        /// Frame counter in the top-left corner. A debug build wants it, a release build
+        /// does not, so the default follows the configuration rather than a fixed value.
+#ifdef _DEBUG
+        bool showFps = true;
+#else
+        bool showFps = false;
+#endif
         bool showBorders = true;
         bool showLabels = true;
         f32 labelMinZoom = 1.3f;
+        /// How large the interface is drawn, 1.0 being the size it was designed at. Every
+        /// metric in the theme and every piece of text scales together, so the layout keeps
+        /// its proportions instead of overflowing its panels.
+        f32 uiScale = 1.0f;
+
+        // --- sound -------------------------------------------------------------------------
+        f32 musicVolume = 0.45f;
+        f32 sfxVolume = 0.8f;
 
         // --- game ------------------------------------------------------------------------
         i32 defaultSpeedIndex = 2;

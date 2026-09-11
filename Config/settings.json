@@ -1,13 +1,16 @@
 {
-  "cameraPitch": 46,
   "defaultSpeedIndex": 2,
   "edgeScroll": 8,
   "fullscreen": true,
   "labelMinZoom": 1.3,
+  "musicVolume": 0.45,
   "rotateSpeed": 90,
+  "sfxVolume": 0.8,
   "showBorders": true,
+  "showFps": true,
   "showLabels": true,
+  "uiScale": 1,
   "vsync": true,
-  "windowHeight": 900,
-  "windowWidth": 1600
+  "windowHeight": 1080,
+  "windowWidth": 1920
 }

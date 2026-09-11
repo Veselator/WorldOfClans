@@ -40,7 +40,7 @@ namespace woc
         const SettlementTier& tier = settlement.Tier();
 
         f32 rate = config.Float("population/baseGrowthRate", 0.012f) * race.modifiers.populationGrowth;
-        rate += settlement.prosperity * config.Float("population/prosperityGrowthFactor", 0.02f);
+        rate += settlement.ProsperityFraction() * config.Float("population/prosperityGrowthFactor", 0.02f);
         rate += (settlement.loyalty - 0.5f) * config.Float("population/loyaltyGrowthFactor", 0.008f);
 
         // Past the tier's ceiling growth stalls and the surplus becomes migrants.
@@ -80,16 +80,19 @@ namespace woc
         const SettlementTier& tier = settlement.Tier();
         const f32 drift = config.Float("population/prosperityDrift", 0.01f);
 
-        f32 target = tier.prosperityCap * (0.4f + settlement.loyalty * 0.6f);
-        if (settlement.besiegedBy != kInvalidId) target = 0.05f;
+        const f32 ceiling = std::max(1.0f, tier.prosperityCap);
 
-        // Fields and roads around a settlement make it visibly richer.
+        // Wealth converges on what this tier's order and farmland can sustain, in absolute coin.
+        f32 target = ceiling * (0.4f + settlement.loyalty * 0.6f);
+
+        // Fields around a settlement make it visibly richer.
         const f32 fields = world.Map().SampleField(settlement.position, 80.0f);
-        target += fields * 0.2f;
-        target = std::clamp(target, 0.0f, tier.prosperityCap + 0.25f);
+        target += fields * ceiling * 0.2f;
+        if (settlement.besiegedBy != kInvalidId) target = ceiling * 0.05f;
+        target = std::clamp(target, 0.0f, ceiling * 1.25f);
 
         settlement.prosperity += (target - settlement.prosperity) * drift * 3.0f;
-        settlement.prosperity = Clamp01(settlement.prosperity);
+        settlement.prosperity = std::max(0.0f, settlement.prosperity);
     }
 
     f32 PopulationSystem::LoyaltyForecast(World& world, EntityId settlementId) const
@@ -143,17 +146,59 @@ namespace woc
         settlement.loyalty = Clamp01(settlement.loyalty + LoyaltyForecast(world, settlement.id));
     }
 
+    f32 PopulationSystem::RevoltChance(World& world, const Settlement& settlement) const
+    {
+        if (settlement.owner == kInvalidId) return 0.0f;
+        if (settlement.besiegedBy != kInvalidId) return 0.0f;
+        if (world.Time().TotalDays() < settlement.rebelliousUntilDay) return 0.0f;
+
+        const Clan* clan = world.FindClan(settlement.owner);
+        if (!clan) return 0.0f;
+
+        ConfigManager& config = ConfigManager::Get();
+
+        // Discontent is the ground a revolt grows in; below the threshold there is none.
+        const f32 threshold = config.Float("population/revoltThreshold", 0.35f);
+        if (settlement.loyalty >= threshold) return 0.0f;
+
+        f32 chance = config.Float("population/revoltBaseChance", 0.02f) *
+                     ((threshold - settlement.loyalty) / std::max(0.01f, threshold));
+
+        // A foreign people is the strongest reason to rise; a foreign god a lesser one.
+        if (settlement.raceId != clan->raceId)
+            chance += config.Float("population/revoltForeignRaceChance", 0.16f);
+        if (settlement.faithId != clan->faithId)
+            chance += config.Float("population/revoltForeignFaithChance", 0.06f);
+
+        // Outside anyone's reach there is no garrison within a week's march, and everybody
+        // in the village knows it.
+        if (!CoverageSystem::Get().IsCovered(world, settlement.position))
+            chance *= config.Float("population/revoltUncoveredFactor", 2.5f);
+
+        // Troops quartered in the settlement keep the peace whatever else is true.
+        for (const auto& [cohortId, cohort] : world.Cohorts())
+        {
+            if (cohort.garrisonOf == settlement.id && cohort.clan == settlement.owner)
+            {
+                chance *= config.Float("population/revoltGarrisonFactor", 0.2f);
+                break;
+            }
+        }
+
+        return Clamp01(chance);
+    }
+
     void PopulationSystem::HandleRevolts(World& world)
     {
         ConfigManager& config = ConfigManager::Get();
-        const f32 threshold = config.Float("population/revoltThreshold", 0.12f);
+        Random& random = GlobalRandom();
 
         std::vector<EntityId> revolting;
         for (const auto& [id, settlement] : world.Settlements())
         {
-            if (settlement.owner == kInvalidId) continue;
-            if (settlement.loyalty > threshold) continue;
-            if (settlement.besiegedBy != kInvalidId) continue;
+            const f32 chance = RevoltChance(world, settlement);
+            if (chance <= 0.0f) continue;
+            if (random.RangeF(0.0f, 1.0f) > chance) continue;
             revolting.push_back(id);
         }
 
@@ -171,8 +216,13 @@ namespace woc
             settlement->loyalty = 0.6f;
             settlement->rebelliousUntilDay = world.Time().TotalDays() +
                 config.Int("population/revoltCooldownDays", 720);
-            world.Log(settlement->name + " відклався й більше нікому не платить данини",
-                      Color::FromRGB(0xD2933A));
+            const Clan* former = clan;
+            const std::string why = former && settlement->raceId != former->raceId
+                ? " піднявся: чужий рід не вкаже тутешньому народові"
+                : (former && settlement->faithId != former->faithId
+                    ? " піднявся: чужі боги не миліші за своїх"
+                    : " відклався й більше нікому не платить данини");
+            world.Log(settlement->name + why, Color::FromRGB(0xD2933A));
             CoverageSystem::Get().MarkDirty();
         }
     }
@@ -199,8 +249,10 @@ namespace woc
             if (!parent) { migrants = 0.0f; continue; }
 
             Vec2 site;
+            // Migrants settle inside their own realm too: a band of peasants does not found
+            // a village in a rival's country.
             if (!SettlementFactory::FindSite(world, world.Map(), SettlementKind::Village,
-                                             parent->position, searchRadius, random, site))
+                                             parent->position, searchRadius, random, site, clanId))
             {
                 // Nowhere to put them this month; keep the pool and try again later.
                 continue;

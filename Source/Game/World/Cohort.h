@@ -55,7 +55,25 @@ namespace woc
 
         f32 experience = 0.0f;      // 0..1, grows with every battle
         f32 supply = 1.0f;          // 0..1, drops away from friendly land
+
+        /// How well the host is held together: ranks dressed, orders passing, baggage up.
+        /// A battle or a forced march tears it; standing still on friendly soil mends it,
+        /// and the bigger the host the slower it mends, because there is more of it to
+        /// put back in order. Combat strength leans on this as hard as it does on numbers.
+        f32 organisation = 1.0f;
         bool inBattle = false;
+        /// Whether this army will plunder enemy holdings. Off by default: burning the
+        /// countryside is a deliberate choice, not something a march does on its own.
+        bool mayRaid = false;
+        /// Whether this host answers risings inside the realm on its own. Off by default:
+        /// a prince's field army should not wander off to a burning village unless he says
+        /// so. Turned on, it marches at the nearest revolt in the realm's own borders.
+        bool suppressRevolts = false;
+        /// Days left of breaking contact. A host that has been ordered to pull back is not
+        /// dragged into another round while it is going; it also cannot be given a fresh
+        /// fight until it has caught its breath.
+        f32 disengageDays = 0.0f;
+        bool IsWithdrawing() const { return disengageDays > 0.0f; }
         EntityId garrisonOf = kInvalidId;   // settlement this cohort is stationed in
 
         Task currentTask;

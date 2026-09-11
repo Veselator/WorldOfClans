@@ -22,6 +22,11 @@ namespace woc
 
         /// Queues a transition; it happens between frames so a scene may request its own exit.
         void Request(SceneId id);
+        /// Queues a return to whatever screen opened this one. Settings reached from the main
+        /// menu goes back to the main menu; the same screen reached from elsewhere goes back
+        /// there instead, so Escape never drops the player somewhere they have not been.
+        void RequestBack() { Request(m_previous); }
+        SceneId Previous() const { return m_previous; }
         bool HasPending() const { return m_hasPending; }
 
         /// Asks the application loop to terminate after the current frame.
@@ -53,6 +58,7 @@ namespace woc
         std::unordered_map<std::string, Json> m_data;
         Scope<IScene> m_current;
         SceneId m_pending = SceneId::MainMenu;
+        SceneId m_previous = SceneId::MainMenu;
         bool m_hasPending = false;
         bool m_quitRequested = false;
     };

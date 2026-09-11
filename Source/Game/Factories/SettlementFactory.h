@@ -25,11 +25,17 @@ namespace woc
     public:
         static Settlement& Create(World& world, const SettlementRequest& request, Random& random);
 
-        /// Placement validity: buildable ground, far enough from its neighbours.
-        static bool CanPlace(const World& world, const MapData& map, SettlementKind kind, const Vec2& position);
+        /// Placement validity: buildable ground, far enough from its neighbours, and - when
+        /// a clan is named - inside that clan's own zone of control. A lord raises towns on
+        /// his own land; open country has to be brought under a castle's reach first.
+        /// `kInvalidId` skips the ownership test, which is what the editor and the initial
+        /// world seeding want, since neither has any borders yet.
+        static bool CanPlace(const World& world, const MapData& map, SettlementKind kind,
+                             const Vec2& position, EntityId clanId = kInvalidId);
 
         /// Finds a spot near `origin` that satisfies CanPlace, or returns false.
         static bool FindSite(const World& world, const MapData& map, SettlementKind kind,
-                             const Vec2& origin, f32 searchRadius, Random& random, Vec2& outPosition);
+                             const Vec2& origin, f32 searchRadius, Random& random, Vec2& outPosition,
+                             EntityId clanId = kInvalidId);
     };
 }

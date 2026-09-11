@@ -20,6 +20,8 @@ namespace woc
             { 0x0020, 0x007E },
             { 0x00A0, 0x00FF },
             { 0x0400, 0x045F },
+            // Ґ and ґ live outside the main Cyrillic block, and Ukrainian needs them.
+            { 0x0490, 0x0491 },
             { 0x2010, 0x2015 },   // dashes
             { 0x2018, 0x201F },   // quotes
             { 0x2190, 0x2193 },   // arrows used by the UI

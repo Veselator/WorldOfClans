@@ -29,6 +29,18 @@ namespace woc
         f32 richness = 1.0f;
         EntityId owner = kInvalidId;
         bool developed = false;
+
+        /// Opening a quarry on the map is the same work as raising one inside a town, so it
+        /// takes the same time. While these are positive the site is claimed and being dug,
+        /// and produces nothing.
+        f32 daysRemaining = 0.0f;
+        f32 daysTotal = 0.0f;
+
+        bool UnderWay() const { return !developed && daysRemaining > 0.0f; }
+        f32 Progress() const
+        {
+            return daysTotal > 0.0f ? 1.0f - daysRemaining / daysTotal : 0.0f;
+        }
     };
 
     struct RoadSegment
@@ -43,6 +55,29 @@ namespace woc
         i32 day = 0;
         std::string text;
         Color color{ 1.0f, 1.0f, 1.0f, 1.0f };
+    };
+
+    /// A diplomatic event drawn on the map for a moment: a line struck between two
+    /// capitals. Red for a war declared, green for a wedding, blue for an alliance.
+    /// A line of news shouted across the top of the screen. The chronicle in the corner is
+    /// where everything is written down; this is for the handful of things a player must
+    /// not be allowed to scroll past - a war declared on him, above all.
+    struct Herald
+    {
+        std::string headline;
+        std::string detail;
+        Color color{ 1.0f, 1.0f, 1.0f, 1.0f };
+        f32 life = 0.0f;        // seconds of real time left
+        f32 duration = 1.0f;
+    };
+
+    struct DiplomaticFlare
+    {
+        Vec2 from;
+        Vec2 to;
+        Color color{ 1.0f, 1.0f, 1.0f, 1.0f };
+        f32 life = 0.0f;        // seconds of real time left
+        f32 duration = 1.0f;
     };
 
     class World final : public Singleton<World>
@@ -76,6 +111,7 @@ namespace woc
         Clan* FindClan(EntityId id);
         State* FindState(EntityId id);
         MineSite* FindMine(EntityId id);
+        const MineSite* FindMine(EntityId id) const;
 
         const Character* FindCharacter(EntityId id) const;
         const Unit* FindUnit(EntityId id) const;
@@ -111,6 +147,9 @@ namespace woc
         Clan* ClanOfSettlement(EntityId settlementId);
         Clan* ClanOfCohort(EntityId cohortId);
         bool AreHostile(EntityId clanA, EntityId clanB) const;
+        /// May this clan lay hands on that settlement at all? Only in open war - an
+        /// unclaimed holding answers to nobody and so is fair game to everyone.
+        bool MayAttackSettlement(EntityId clanId, EntityId settlementId) const;
 
         /// Total head count of a cohort across all of its units.
         u32 CohortStrength(EntityId cohortId) const;
@@ -132,6 +171,18 @@ namespace woc
 
         // --- chronicle ---------------------------------------------------------------------------------
         void Log(const std::string& text, const Color& color);
+        /// Strikes a line between two realms' capitals. Purely a signal to the player;
+        /// nothing in the simulation reads it back.
+        void Flare(EntityId stateA, EntityId stateB, const Color& color);
+        /// Shouts a line across the top of the screen for a few seconds.
+        void Announce(const std::string& headline, const std::string& detail, const Color& color);
+        std::vector<Herald>& Heralds() { return m_heralds; }
+        const std::vector<Herald>& Heralds() const { return m_heralds; }
+        std::vector<DiplomaticFlare>& Flares() { return m_flares; }
+        const std::vector<DiplomaticFlare>& Flares() const { return m_flares; }
+        /// The seat of a realm: its leading house's greatest city, or any holding it has.
+        const Settlement* CapitalOf(EntityId stateId) const;
+
         const std::vector<Chronicle>& ChronicleEntries() const { return m_chronicle; }
 
         // --- persistence ---------------------------------------------------------------------------------
@@ -162,6 +213,8 @@ namespace woc
         std::unordered_map<EntityId, State> m_states;
         std::vector<MineSite> m_mines;
         std::vector<RoadSegment> m_roads;
+        std::vector<DiplomaticFlare> m_flares;
+        std::vector<Herald> m_heralds;
 
         std::vector<Scope<IPlayer>> m_players;
         std::vector<Chronicle> m_chronicle;

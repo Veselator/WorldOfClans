@@ -7,7 +7,7 @@ layout(set = 1, binding = 0) uniform sampler2D uTexture;
 
 layout(push_constant) uniform Push
 {
-    vec4 mode;   // x: 0 = solid, 1 = glyph, 2 = sprite
+    vec4 mode;   // x: 0 = solid, 1 = glyph, 2 = sprite, 3 = minimap
 } pc;
 
 layout(location = 0) in vec2 vUV;
@@ -29,6 +29,12 @@ void main()
     {
         vec4 texel = textureLod(uTexture, vUV, 0.0);
         if (texel.a < 0.35) discard;
+        outColor = vec4(texel.rgb * vColor.rgb, texel.a * vColor.a);
+    }
+    else if (mode == 3 || mode == 4)
+    {
+        // No cut-out here: every texel of a picture is meant, including the empty sea.
+        vec4 texel = textureLod(uTexture, vUV, 0.0);
         outColor = vec4(texel.rgb * vColor.rgb, texel.a * vColor.a);
     }
     else

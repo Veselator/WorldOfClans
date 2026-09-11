@@ -23,8 +23,10 @@ namespace woc
     {
         friend class Singleton<EconomySystem>;
     public:
-        /// Applies one month of economy to every clan.
-        void Tick(World& world);
+        /// Applies `days` worth of economy to every clan. The figures the panels show are
+        /// still monthly - that is how a player thinks about income - but the treasury is
+        /// settled on whatever cadence the simulation runs it at.
+        void Tick(World& world, i32 days);
 
         /// Computes a clan's budget without applying it - used by the treasury panel.
         ClanBudget Preview(World& world, EntityId clanId) const;

@@ -1,4 +1,5 @@
 #include "UI.h"
+#include "../Audio/AudioSystem.h"
 #include "../Platform/Input.h"
 #include "../Render/Renderer.h"
 
@@ -35,6 +36,7 @@ namespace woc
         m_wantsMouse = m_wantsMouseNext;
         m_wantsMouseNext = false;
         m_hotId = 0;
+        m_hasModal = false;
         m_tooltip.clear();
         m_clipRegions.clear();
         m_caretTimer += Renderer::Get().DeltaTime();
@@ -81,6 +83,8 @@ namespace woc
     bool UI::IsHovered(const Rect& rect) const
     {
         if (!rect.Contains(m_mouse)) return false;
+        // Everything behind a dialog is inert until the dialog is answered.
+        if (m_hasModal && !m_modal.Contains(m_mouse)) return false;
         // A widget inside a scroll view is only hovered while visible.
         for (const Rect& clip : m_clipRegions)
         {
@@ -152,6 +156,10 @@ namespace woc
         const Theme& theme = Theme::Get();
         BlockMouse(rect);
 
+        // Last frame measured how tall the content really was; trust that over the estimate.
+        const auto remembered = m_scrollExtents.find(&scroll);
+        if (remembered != m_scrollExtents.end()) contentHeight = std::max(contentHeight, remembered->second);
+
         const f32 maximum = std::max(0.0f, contentHeight - rect.h);
         if (IsHovered(rect))
         {
@@ -162,6 +170,8 @@ namespace woc
 
         renderer.PushClip(rect);
         m_clipRegions.push_back(rect);
+        m_scrollKeys.push_back(&scroll);
+        m_scrollTops.push_back(rect.y - scroll);
 
         if (maximum > 0.0f)
         {
@@ -176,34 +186,76 @@ namespace woc
         return { rect.x, rect.y - scroll, rect.w - (maximum > 0.0f ? 8.0f : 0.0f), contentHeight };
     }
 
-    void UI::EndScroll()
+    void UI::EndScroll(f32 contentBottom)
     {
+        if (!m_scrollKeys.empty())
+        {
+            if (contentBottom > 0.0f)
+            {
+                // A little slack so the last row is not flush with the bottom edge.
+                m_scrollExtents[m_scrollKeys.back()] =
+                    std::max(0.0f, contentBottom - m_scrollTops.back()) + 8.0f;
+            }
+            m_scrollKeys.pop_back();
+            m_scrollTops.pop_back();
+        }
+
         Renderer::Get().PopClip();
         if (!m_clipRegions.empty()) m_clipRegions.pop_back();
     }
 
-    bool UI::Button(const Rect& rect, const std::string& label, bool enabled)
+    void UI::PlayPressSound()
+    {
+        AudioSystem::Get().PlayClick();
+    }
+
+    bool UI::Button(const Rect& rect, const std::string& label, ButtonState state)
     {
         Renderer& renderer = Renderer::Get();
         const Theme& theme = Theme::Get();
         const u32 id = HashId(label, rect);
         BlockMouse(rect);
 
-        const bool hovered = enabled && IsHovered(rect);
+        // A red button is still a live button - hovering it tells the player what it would
+        // cost - but pressing it buys nothing, so it never reports a click.
+        const bool live = state != ButtonState::Disabled;
+        const bool hovered = live && IsHovered(rect);
         if (hovered) m_hotId = id;
         if (hovered && m_mousePressed) m_activeId = id;
 
-        const bool held = enabled && m_activeId == id && m_mouseDown;
-        const bool clicked = enabled && hovered && m_mouseReleased && m_activeId == id;
+        const bool held = live && m_activeId == id && m_mouseDown;
+        const bool clicked = state == ButtonState::Ready && hovered &&
+                             m_mouseReleased && m_activeId == id;
 
         Color fill = theme.panelAlt;
-        if (!enabled) fill = theme.panel.Scaled(0.8f);
-        else if (held) fill = Mix(theme.panelAlt, theme.accent, 0.35f);
-        else if (hovered) fill = Mix(theme.panelAlt, theme.accent, 0.16f);
+        Color outline = theme.border;
+        Color text = theme.text;
+
+        switch (state)
+        {
+        case ButtonState::Ready:
+            if (held) fill = Mix(theme.panelAlt, theme.accent, 0.35f);
+            else if (hovered) fill = Mix(theme.panelAlt, theme.accent, 0.16f);
+            if (hovered) outline = theme.accent;
+            break;
+
+        case ButtonState::Unaffordable:
+            fill = Mix(theme.panelAlt, theme.negative, hovered ? 0.34f : 0.22f);
+            outline = theme.negative;
+            text = Mix(theme.text, theme.negative, 0.45f);
+            break;
+
+        case ButtonState::Disabled:
+            fill = theme.panel.Scaled(0.8f);
+            text = theme.textDim;
+            break;
+        }
 
         renderer.UIRect(rect, fill);
-        renderer.UIRectOutline(rect, hovered && enabled ? theme.accent : theme.border, theme.borderThickness);
-        renderer.UITextCentered(label, rect, enabled ? theme.text : theme.textDim);
+        renderer.UIRectOutline(rect, outline, theme.borderThickness);
+        renderer.UITextCentered(label, rect, text);
+
+        if (clicked) PlayPressSound();
         return clicked;
     }
 
@@ -214,7 +266,10 @@ namespace woc
 
         const bool hovered = enabled && IsHovered(rect);
         if (hovered && m_mousePressed) m_activeId = hash;
-        return enabled && hovered && m_mouseReleased && m_activeId == hash;
+
+        const bool clicked = enabled && hovered && m_mouseReleased && m_activeId == hash;
+        if (clicked) PlayPressSound();
+        return clicked;
     }
 
     bool UI::IconButton(const Rect& rect, SpriteId sprite, const std::string& tooltip, bool enabled)
@@ -232,6 +287,8 @@ namespace woc
         renderer.UIRectOutline(rect, hovered ? theme.accent : theme.border, theme.borderThickness);
         renderer.UISprite(sprite, rect.Inset(3.0f), enabled ? theme.text : theme.textDim);
         if (hovered && !tooltip.empty()) Tooltip(tooltip);
+
+        if (clicked) PlayPressSound();
         return clicked;
     }
 
@@ -257,6 +314,8 @@ namespace woc
                                  rect.y + (rect.h - renderer.TextHeight()) * 0.5f },
                         selected ? theme.textStrong : theme.text);
         if (selected) renderer.UIRectOutline(rect, theme.accent, 1.0f);
+
+        if (clicked) PlayPressSound();
         return clicked;
     }
 
@@ -270,7 +329,7 @@ namespace woc
         const bool hovered = IsHovered(rect);
         if (hovered && m_mousePressed) m_activeId = id;
         const bool clicked = hovered && m_mouseReleased && m_activeId == id;
-        if (clicked) value = !value;
+        if (clicked) { value = !value; PlayPressSound(); }
 
         const f32 box = std::min(rect.h - 6.0f, 16.0f);
         const Rect checkbox{ rect.x + 2.0f, rect.y + (rect.h - box) * 0.5f, box, box };
@@ -339,6 +398,17 @@ namespace woc
         return changed;
     }
 
+    size_t UI::CountCharacters(const std::string& utf8)
+    {
+        size_t count = 0;
+        for (char c : utf8)
+        {
+            // Continuation bytes belong to the letter before them.
+            if ((static_cast<u8>(c) & 0xC0) != 0x80) ++count;
+        }
+        return count;
+    }
+
     bool UI::TextField(const Rect& rect, const std::string& id, std::string& value, size_t maxLength)
     {
         Renderer& renderer = Renderer::Get();
@@ -354,9 +424,26 @@ namespace woc
 
         if (focused)
         {
-            for (char c : input.TypedText())
+            // Typed text arrives as UTF-8, and a Cyrillic letter is two bytes. Appending it
+            // byte by byte against a byte limit could cut a letter in half - which is what
+            // made the field look as though it refused Ukrainian - so whole sequences go in
+            // at once and the limit counts letters, not bytes.
+            const std::string& typed = input.TypedText();
+            for (size_t i = 0; i < typed.size();)
             {
-                if (value.size() < maxLength) { value += c; changed = true; }
+                const u8 lead = static_cast<u8>(typed[i]);
+                size_t length = 1;
+                if ((lead & 0xE0) == 0xC0) length = 2;
+                else if ((lead & 0xF0) == 0xE0) length = 3;
+                else if ((lead & 0xF8) == 0xF0) length = 4;
+                length = std::min(length, typed.size() - i);
+
+                if (CountCharacters(value) < maxLength)
+                {
+                    value.append(typed, i, length);
+                    changed = true;
+                }
+                i += length;
             }
             if (input.WasKeyPressed(Key::Backspace) && !value.empty())
             {

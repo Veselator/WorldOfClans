@@ -35,6 +35,8 @@ namespace woc
             info.moveCost = entry["moveCost"].AsFloat(1.0f);
             info.coverageCost = entry["coverageCost"].AsFloat(1.0f);
             info.soil = entry["soil"].AsFloat(1.0f);
+            info.arable = entry["arable"].AsBool(false);
+            info.mineable = entry["mineable"].AsBool(false);
             info.defense = entry["defense"].AsFloat(1.0f);
             info.stone = entry["stone"].AsFloat(0.0f);
             info.heightFactor = entry["heightFactor"].AsFloat(0.5f);

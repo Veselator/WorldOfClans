@@ -1,11 +1,17 @@
 #include "Simulation.h"
 
+#include <cstdlib>
+
 #include "BattleSystem.h"
 #include "CoverageSystem.h"
+#include "../../Render/Renderer.h"
+#include "FogSystem.h"
 #include "DiplomacySystem.h"
 #include "DynastySystem.h"
 #include "EconomySystem.h"
+#include "MarketSystem.h"
 #include "ForestrySystem.h"
+#include "RoadSystem.h"
 #include "MovementSystem.h"
 #include "PoliticsSystem.h"
 #include "PopulationSystem.h"
@@ -13,6 +19,7 @@
 #include "../Players/IPlayer.h"
 #include "../World/World.h"
 #include "../../Core/Config.h"
+#include "../../Core/Profiler.h"
 
 #include <algorithm>
 
@@ -86,11 +93,33 @@ namespace woc
     void Simulation::Update(World& world, f32 realSeconds)
     {
         // Coverage is refreshed even while paused so the borders react to a command at once.
+        // Both halves are cheap: the flood itself runs on a worker thread.
+        // What the realm can see is refreshed before the borders are, so a newly scouted
+        // frontier is committed to memory in the same frame it is first laid eyes on.
+        WOC_PROFILE("sim.frame");
+        FogSystem& fog = FogSystem::Get();
+        fog.Update(world, realSeconds);
+        Renderer::Get().SetFogEnabled(fog.IsEnabled());
+        if (fog.IsEnabled())
+        {
+            const u32 tint = static_cast<u32>(std::strtoul(
+                ConfigManager::Get().Str("render/fog/color", "141b26").c_str(), nullptr, 16));
+            Renderer::Get().SetClearColor(Color::FromRGB(tint));
+        }
+        if (fog.ConsumeDirty())
+        {
+            WOC_PROFILE("coverage.refreshLayer");
+            CoverageSystem::Get().RefreshLayer(world);
+        }
+
+        { WOC_PROFILE("coverage.apply"); CoverageSystem::Get().Update(world); }
         if (CoverageSystem::Get().IsDirty())
         {
+            WOC_PROFILE("coverage.dispatch");
             CoverageSystem::Get().Recompute(world);
         }
         ForestrySystem::Get().UploadLayers(world);
+        { WOC_PROFILE("roads.upload"); RoadSystem::Get().UploadLayer(world); }
 
         const f32 speed = SpeedMultiplier();
         if (speed <= 0.0f) return;
@@ -99,23 +128,31 @@ namespace woc
         const f32 days = std::min(realSeconds * m_daysPerSecond * speed, 4.0f);
 
         // Continuous systems move on fractional days; the rest wait for whole days.
-        MovementSystem::Get().Tick(world, days);
-        BattleSystem::Get().Tick(world, days);
+        { WOC_PROFILE("sim.movement"); MovementSystem::Get().Tick(world, days); }
+        { WOC_PROFILE("sim.battle");   BattleSystem::Get().Tick(world, days); }
+        { WOC_PROFILE("sim.roads");    RoadSystem::Get().Tick(world, days); }
 
         const i32 elapsed = world.Time().Advance(days);
         if (elapsed <= 0) return;
 
-        RunDailySystems(world, elapsed);
-        RunPeriodicSystems(world, world.Time().TotalDays());
+        { WOC_PROFILE("sim.daily");    RunDailySystems(world, elapsed); }
+        { WOC_PROFILE("sim.periodic"); RunPeriodicSystems(world, world.Time().TotalDays()); }
     }
 
     void Simulation::RunDailySystems(World& world, i32 days)
     {
-        SettlementSystem::Get().Tick(world, days);
+        { WOC_PROFILE("daily.settlements"); SettlementSystem::Get().Tick(world, days); }
 
-        for (const Scope<IPlayer>& player : world.Players())
+        // Hosts standing by for trouble at home look for it once a day, which is often
+        // enough for a rising and rare enough to cost nothing.
+        { WOC_PROFILE("daily.revolts"); MovementSystem::Get().AnswerRevolts(world); }
+
         {
-            player->OnDay(world, world.Time().TotalDays());
+            WOC_PROFILE("daily.players");
+            for (const Scope<IPlayer>& player : world.Players())
+            {
+                player->OnDay(world, world.Time().TotalDays());
+            }
         }
     }
 
@@ -123,8 +160,13 @@ namespace woc
     {
         if (today - m_lastEconomyDay >= m_economyTickDays)
         {
+            const i32 elapsed = today - m_lastEconomyDay;
             m_lastEconomyDay = today;
-            EconomySystem::Get().Tick(world);
+            // Prices are set before the treasury is settled, so what a realm earns this
+            // fortnight is already worth what this fortnight says it is worth.
+            WOC_PROFILE("periodic.economy");
+            MarketSystem::Get().Tick(world, elapsed);
+            EconomySystem::Get().Tick(world, elapsed);
         }
 
         if (today - m_lastPopulationDay >= m_populationTickDays)

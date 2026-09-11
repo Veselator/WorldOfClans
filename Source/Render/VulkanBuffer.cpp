@@ -105,12 +105,21 @@ namespace woc
         std::swap(m_aspect, other.m_aspect);
         std::swap(m_width, other.m_width);
         std::swap(m_height, other.m_height);
+        std::swap(m_staging, other.m_staging);
+        std::swap(m_stageBytes, other.m_stageBytes);
+        std::swap(m_stagePending, other.m_stagePending);
+        std::swap(m_stageRecorded, other.m_stageRecorded);
+        std::swap(m_stageFrame, other.m_stageFrame);
     }
 
     void GpuImage::Create(u32 width, u32 height, VkFormat format, VkImageUsageFlags usage,
                           VkImageAspectFlags aspect)
     {
         Destroy();
+        // A fresh image has never been read, so the next staged copy starts from undefined
+        // and nothing is owed to a frame that was drawing the image this one replaces.
+        m_stagePending = false;
+        m_stageRecorded = false;
         if (width == 0 || height == 0) return;
 
         VulkanDevice& device = VulkanDevice::Get();
@@ -159,6 +168,50 @@ namespace woc
         if (m_image) { vkDestroyImage(device, m_image, nullptr); m_image = VK_NULL_HANDLE; }
         if (m_memory) { vkFreeMemory(device, m_memory, nullptr); m_memory = VK_NULL_HANDLE; }
         m_width = m_height = 0;
+    }
+
+    bool GpuImage::StagePixels(const void* pixels, VkDeviceSize byteSize, u64 frame, u32 framesInFlight)
+    {
+        if (!m_image || byteSize == 0) return false;
+
+        // The bytes the last recorded copy reads are the ones in this very buffer, and the
+        // GPU may still be reading them. Once the renderer has gone round often enough for
+        // that frame to have finished, they are ours again.
+        if (!m_stagePending && m_stageRecorded && frame < m_stageFrame + framesInFlight) return false;
+
+        if (m_staging.Size() < byteSize)
+        {
+            m_staging.Create(byteSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
+        m_staging.Upload(pixels, byteSize);
+        m_stageBytes = byteSize;
+        m_stagePending = true;
+        return true;
+    }
+
+    void GpuImage::RecordStagedUpload(VkCommandBuffer cmd, u64 frame)
+    {
+        if (!m_stagePending || !m_image) return;
+
+        // From shader-read rather than from undefined: the barrier then also waits for the
+        // reads the previous frame is still making of this very image.
+        TransitionLayout(cmd, m_stageRecorded ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                              : VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkBufferImageCopy region{};
+        region.imageSubresource = { m_aspect, 0, 0, 1 };
+        region.imageExtent = { m_width, m_height, 1 };
+        vkCmdCopyBufferToImage(cmd, m_staging.Handle(), m_image,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        TransitionLayout(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        m_stagePending = false;
+        m_stageRecorded = true;
+        m_stageFrame = frame;
     }
 
     void GpuImage::TransitionLayout(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout)

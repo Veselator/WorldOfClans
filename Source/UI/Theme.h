@@ -12,6 +12,10 @@ namespace woc
         friend class Singleton<Theme>;
     public:
         void Load();
+        /// Re-reads the metrics and multiplies them by `scale`. The colours and the labels
+        /// are untouched; only the sizes move.
+        void SetScale(f32 scale);
+        f32 Scale() const { return m_scale; }
 
         Color background, panel, panelAlt, panelHeader, border, borderStrong;
         Color text, textDim, textStrong, accent, accentDim;
@@ -36,5 +40,6 @@ namespace woc
         ~Theme() = default;
 
         std::unordered_map<std::string, std::string> m_labels;
+        f32 m_scale = 1.0f;
     };
 }

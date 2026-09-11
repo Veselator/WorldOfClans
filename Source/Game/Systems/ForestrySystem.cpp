@@ -119,6 +119,7 @@ namespace woc
         const f32 growth = config.Float("forestry/fieldGrowthPerMonth", 0.6f) * 0.05f;
         const f32 baseRadius = config.Float("forestry/fieldMaxRadius", 46.0f);
         const f32 minimumSoil = config.Float("forestry/fieldRequiresSoil", 0.35f);
+        const f32 clearing = config.Float("forestry/fieldClearingPerMonth", 0.22f);
 
         for (auto& [id, settlement] : world.Settlements())
         {
@@ -144,19 +145,45 @@ namespace woc
 
                     Tile& tile = map.At(probe);
                     const TerrainInfo& info = TerrainDatabase::Get().At(tile.terrain);
+                    // Only the three plain soils are ploughed. Sand, hillside and highland
+                    // may feed goats, but no furrow is ever cut in them.
+                    if (!info.arable) continue;
                     if (info.soil < minimumSoil || info.water || !info.passable) continue;
 
-                    // Ploughing pushes back the treeline a little as it goes.
                     const f32 target = Clamp01(demand * (1.0f - static_cast<f32>(dx * dx + dy * dy) /
                                                           static_cast<f32>(span * span + 1)));
-                    if (tile.field < target)
+                    if (tile.field >= target) continue;
+
+                    // No furrow is cut under standing timber. The village clears the wood
+                    // first - by itself, over a season or two - and only the bare ground
+                    // behind the axemen is ploughed.
+                    if (tile.forest > 0.02f)
                     {
-                        tile.field = std::min(target, tile.field + growth);
-                        tile.forest = std::max(0.0f, tile.forest - growth * 0.5f);
+                        tile.forest = std::max(0.0f, tile.forest - clearing);
+                        continue;
                     }
+
+                    tile.field = std::min(target, tile.field + growth);
                 }
             }
         }
+    }
+
+    void ForestrySystem::ClearUnarableFields(World& world)
+    {
+        MapData& map = world.MutableMap();
+        if (!map.IsValid()) return;
+
+        const TerrainDatabase& terrain = TerrainDatabase::Get();
+        bool changed = false;
+        for (Tile& tile : map.Tiles())
+        {
+            if (tile.field <= 0.0f) continue;
+            if (terrain.At(tile.terrain).arable) continue;
+            tile.field = 0.0f;
+            changed = true;
+        }
+        if (changed) m_layersDirty = true;
     }
 
     void ForestrySystem::UploadLayers(World& world)

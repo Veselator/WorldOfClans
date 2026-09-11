@@ -14,6 +14,7 @@ namespace woc
         const char* Name() const override { return "PartySetup"; }
 
         void OnEnter() override;
+        void OnExit() override;
         void Update(f32 deltaTime) override;
         void Render() override;
 
@@ -27,7 +28,13 @@ namespace woc
         /// The colours a banner may be painted in, straight from game.json.
         const std::vector<u32>& Palette() const { return m_palette; }
 
+        /// Reads each map's baked portrait and hands it to the renderer. Freed on the way
+        /// out: a handful of descriptor sets is not something to leak between screens.
+        void LoadThumbnails();
+        void ReleaseThumbnails();
+
         std::vector<MapDescription> m_maps;
+        std::vector<u32> m_thumbnails;   // one renderer handle per map, 0 where there is none
         std::vector<u32> m_palette;
         PartySettings m_settings;
 

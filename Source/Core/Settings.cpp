@@ -6,6 +6,7 @@
 #include "Paths.h"
 #include "../Platform/Window.h"
 #include "../Render/Renderer.h"
+#include "../UI/Theme.h"
 #include "../Game/Systems/Simulation.h"
 
 namespace woc
@@ -24,10 +25,12 @@ namespace woc
         windowWidth = static_cast<u32>(config.Int("window/width", 1600));
         windowHeight = static_cast<u32>(config.Int("window/height", 900));
         vsync = config.Bool("render/vsync", true);
-        cameraPitch = config.Float("camera/pitchDegrees", 46.0f);
         rotateSpeed = config.Float("camera/rotateSpeed", 90.0f);
         edgeScroll = static_cast<f32>(config.Int("camera/edgeScrollMargin", 8));
         labelMinZoom = config.Float("render/labels/minZoom", 1.3f);
+        uiScale = config.Float("render/uiScale", 1.0f);
+        musicVolume = config.Float("audio/musicVolume", 0.45f);
+        sfxVolume = config.Float("audio/sfxVolume", 0.8f);
         defaultSpeedIndex = config.Int("simulation/defaultSpeedIndex", 2);
 
         m_resolutions = {
@@ -42,12 +45,15 @@ namespace woc
         windowWidth = static_cast<u32>(doc["windowWidth"].AsInt(static_cast<i32>(windowWidth)));
         windowHeight = static_cast<u32>(doc["windowHeight"].AsInt(static_cast<i32>(windowHeight)));
         vsync = doc["vsync"].AsBool(vsync);
-        cameraPitch = doc["cameraPitch"].AsFloat(cameraPitch);
         rotateSpeed = doc["rotateSpeed"].AsFloat(rotateSpeed);
         edgeScroll = doc["edgeScroll"].AsFloat(edgeScroll);
+        showFps = doc["showFps"].AsBool(showFps);
         showBorders = doc["showBorders"].AsBool(showBorders);
         showLabels = doc["showLabels"].AsBool(showLabels);
         labelMinZoom = doc["labelMinZoom"].AsFloat(labelMinZoom);
+        uiScale = doc["uiScale"].AsFloat(uiScale);
+        musicVolume = doc["musicVolume"].AsFloat(musicVolume);
+        sfxVolume = doc["sfxVolume"].AsFloat(sfxVolume);
         defaultSpeedIndex = doc["defaultSpeedIndex"].AsInt(defaultSpeedIndex);
 
         WOC_LOG_INFO("Settings loaded from ", kFile);
@@ -60,12 +66,15 @@ namespace woc
         doc["windowWidth"] = static_cast<i64>(windowWidth);
         doc["windowHeight"] = static_cast<i64>(windowHeight);
         doc["vsync"] = vsync;
-        doc["cameraPitch"] = cameraPitch;
         doc["rotateSpeed"] = rotateSpeed;
         doc["edgeScroll"] = edgeScroll;
+        doc["showFps"] = showFps;
         doc["showBorders"] = showBorders;
         doc["showLabels"] = showLabels;
         doc["labelMinZoom"] = labelMinZoom;
+        doc["uiScale"] = uiScale;
+        doc["musicVolume"] = musicVolume;
+        doc["sfxVolume"] = sfxVolume;
         doc["defaultSpeedIndex"] = defaultSpeedIndex;
 
         if (!doc.SaveFile(Paths::Get().Config(kFile)))
@@ -82,8 +91,14 @@ namespace woc
         Renderer& renderer = Renderer::Get();
         renderer.SetBordersVisible(showBorders);
 
+        // The interface scales as one piece: the theme's metrics and every string drawn
+        // through the renderer, so a panel and the text inside it grow together.
+        Theme::Get().SetScale(uiScale);
+        renderer.SetUIScale(uiScale);
+
         Camera& camera = renderer.GetCamera();
-        camera.Configure(cameraPitch, camera.MinZoom(), camera.MaxZoom(), camera.Zoom());
+        camera.Configure(ConfigManager::Get().Float("camera/pitchDegrees", 46.0f),
+                         camera.MinZoom(), camera.MaxZoom(), camera.Zoom());
 
         Simulation::Get().SetSpeedIndex(defaultSpeedIndex);
     }

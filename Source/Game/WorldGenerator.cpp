@@ -7,7 +7,10 @@
 #include "Players/AIPlayer.h"
 #include "Players/HumanPlayer.h"
 #include "Systems/CoverageSystem.h"
+#include "Systems/RoadSystem.h"
 #include "Systems/DynastySystem.h"
+#include "Systems/FogSystem.h"
+#include "Systems/MarketSystem.h"
 #include "Systems/ForestrySystem.h"
 #include "Systems/Simulation.h"
 #include "World/RaceDatabase.h"
@@ -62,6 +65,7 @@ namespace woc
         node["race"] = playerRace;
         node["randomiseRaces"] = randomiseRaces;
         node["aiAggression"] = aiAggression;
+        node["fogOfWar"] = fogOfWar;
         node["playerColor"] = static_cast<i64>(playerColor);
 
         Json colors = Json::MakeArray();
@@ -79,6 +83,7 @@ namespace woc
         settings.playerRace = node["race"].AsString("human");
         settings.randomiseRaces = node["randomiseRaces"].AsBool(true);
         settings.aiAggression = node["aiAggression"].AsFloat(0.55f);
+        settings.fogOfWar = node["fogOfWar"].AsBool(false);
         settings.playerColor = static_cast<u32>(node["playerColor"].AsNumber(0xC8452D));
         for (const Json& color : node["rivalColors"].AsArray())
         {
@@ -112,15 +117,18 @@ namespace woc
         return world.SaveObjects().SaveFile(path);
     }
 
-    void WorldGenerator::PublishMapToRenderer(World& world)
+    void WorldGenerator::PublishMapToRenderer(const MapData& map)
     {
-        const MapData& map = world.Map();
         Renderer& renderer = Renderer::Get();
 
         renderer.SetTerrainColor(map.ColorPixels(), map.PixelWidth(), map.PixelHeight());
         renderer.SetTreeMask(map.BuildForestMask(), map.TileWidth(), map.TileHeight());
         renderer.SetFieldMask(map.BuildFieldMask(), map.TileWidth(), map.TileHeight());
         renderer.SetOwnerMask(map.BuildOwnerMask(), map.TileWidth(), map.TileHeight());
+        renderer.SetRoadMask(std::vector<u8>(1, 0), 1, 1);
+        renderer.SetShoreMask(map.BuildShoreMask(ConfigManager::Get().Int("render/water/foamReach", 3)),
+                               map.TileWidth(), map.TileHeight());
+
 
         const u32 step = static_cast<u32>(ConfigManager::Get().Int("render/terrainMeshStep", 8));
         renderer.SetTerrainMesh(MapLoader::BuildMesh(map, step));
@@ -131,6 +139,11 @@ namespace woc
         camera.SetBounds({ 0.0f, 0.0f },
                          { static_cast<f32>(map.PixelWidth()), static_cast<f32>(map.PixelHeight()) });
         camera.SetFocus({ map.PixelWidth() * 0.5f, map.PixelHeight() * 0.5f });
+    }
+
+    void WorldGenerator::PublishMapToRenderer(World& world)
+    {
+        PublishMapToRenderer(world.Map());
     }
 
     bool WorldGenerator::Generate(World& world, const PartySettings& settings)
@@ -157,11 +170,18 @@ namespace woc
         if (!hasFurniture) WOC_LOG_TRACE("No MapObjects.json for this map; using bare terrain");
 
         CreatePlayers(world, settings);
+        RoadSystem::Get().Reset();
+        RoadSystem::Get().StampExisting(world);
+        ForestrySystem::Get().ClearUnarableFields(world);
+
+        FogSystem::Get().SetEnabled(settings.fogOfWar);
+        FogSystem::Get().Reset(world);
+        MarketSystem::Get().Reset();
         PublishMapToRenderer(world);
 
         Simulation::Get().Reset();
         CoverageSystem::Get().MarkDirty();
-        CoverageSystem::Get().Recompute(world);
+        CoverageSystem::Get().RecomputeBlocking(world);
 
         world.Log("Починається " + std::to_string(world.Time().Year()) + " рік від Різдва Христового",
                   Color::FromRGB(0xC9A227));
@@ -267,7 +287,6 @@ namespace woc
             capital.population = random.Range(3200, 5200);
             Settlement& city = SettlementFactory::Create(world, capital, random);
             city.buildings.push_back("palisade");
-            city.buildings.push_back("market");
 
             DynastySystem::Get().FoundDynasty(world, clan.id, city.name);
 
@@ -365,7 +384,7 @@ namespace woc
                 random.RangeF(30.0f, static_cast<f32>(map.PixelHeight()) - 30.0f)
             };
             const TerrainInfo& terrain = map.TerrainAtMap(position);
-            if (terrain.stone < 0.9f || !terrain.passable) continue;
+            if (!terrain.mineable || !terrain.passable) continue;
 
             const bool tooClose = std::any_of(world.Mines().begin(), world.Mines().end(),
                 [&](const MineSite& other) { return Distance(other.position, position) < 120.0f; });

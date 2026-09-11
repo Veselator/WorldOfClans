@@ -11,6 +11,7 @@
 namespace woc
 {
     class World;
+    class MapData;
 
     struct PartySettings
     {
@@ -20,6 +21,8 @@ namespace woc
         std::string playerRace = "human";
         bool randomiseRaces = true;
         f32 aiAggression = 0.55f;
+        /// Whether the player only sees what his own people can see.
+        bool fogOfWar = false;
 
         /// Banner colour of the player's realm.
         u32 playerColor = 0xC8452D;
@@ -46,6 +49,8 @@ namespace woc
         /// Uploads the loaded map to the renderer and frames the camera on it. Public because
         /// loading a save reaches the same point by a different road.
         static void PublishMapToRenderer(World& world);
+        /// Publishes bare terrain with no realms on it - the title screen's backdrop.
+        static void PublishMapToRenderer(const MapData& map);
 
     private:
         static void SeedRealms(World& world, const PartySettings& settings);

@@ -80,6 +80,15 @@ namespace woc
         {
             budget.income += SettlementOutput(world, settlementId);
         }
+
+        // A quarry the clan has opened yields stone on its own, whatever the ground around
+        // the nearest town happens to be made of.
+        const f32 perMine = ConfigManager::Get().Float("economy/stonePerDevelopedMine", 5.5f);
+        for (const MineSite& mine : world.Mines())
+        {
+            if (!mine.developed || mine.owner != clanId) continue;
+            budget.income.stone += mine.richness * perMine;
+        }
         budget.upkeep = ClanUpkeep(world, clanId);
         budget.foodConsumption = budget.upkeep.food;
         budget.net = budget.income - budget.upkeep;
@@ -87,14 +96,21 @@ namespace woc
         return budget;
     }
 
-    void EconomySystem::Tick(World& world)
+    void EconomySystem::Tick(World& world, i32 days)
     {
+        if (days <= 0) return;
+
+        // Everything in the budget is quoted per month, so a settlement run on a fortnight
+        // pays out half of it. The year's total is the same whatever the cadence.
+        const f32 monthDays = static_cast<f32>(std::max(1, ConfigManager::Get().Int("simulation/daysPerMonth", 30)));
+        const f32 share = static_cast<f32>(days) / monthDays;
+
         for (auto& [clanId, clan] : world.Clans())
         {
             if (clan.eliminated) continue;
 
             const ClanBudget budget = Preview(world, clanId);
-            clan.resources += budget.net;
+            clan.resources += budget.net * share;
             ApplyShortages(world, clan, budget);
             clan.resources.ClampNonNegative();
         }

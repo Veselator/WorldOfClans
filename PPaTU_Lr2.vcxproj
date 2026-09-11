@@ -62,7 +62,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>gdi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>gdi32.lib;user32.lib;xaudio2.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>"$(ProjectDir)Tools\compile_shaders.bat" "$(ProjectDir)"</Command>
@@ -84,7 +84,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>gdi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>gdi32.lib;user32.lib;xaudio2.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;ole32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>"$(ProjectDir)Tools\compile_shaders.bat" "$(ProjectDir)"</Command>
@@ -93,12 +93,16 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Source\Application.cpp" />
+    <ClCompile Include="Source\Audio\AudioClip.cpp" />
+    <ClCompile Include="Source\Audio\AudioSystem.cpp" />
     <ClCompile Include="Source\Core\Config.cpp" />
     <ClCompile Include="Source\Core\EventBus.cpp" />
     <ClCompile Include="Source\Core\ImageIO.cpp" />
+    <ClCompile Include="Source\Core\JobSystem.cpp" />
     <ClCompile Include="Source\Core\Json.cpp" />
     <ClCompile Include="Source\Core\Log.cpp" />
     <ClCompile Include="Source\Core\Paths.cpp" />
+    <ClCompile Include="Source\Core\Profiler.cpp" />
     <ClCompile Include="Source\Core\Settings.cpp" />
     <ClCompile Include="Source\Game\Decorators\SettlementDecorators.cpp" />
     <ClCompile Include="Source\Game\Factories\CharacterFactory.cpp" />
@@ -111,16 +115,20 @@
     <ClCompile Include="Source\Game\Map\Pathfinder.cpp" />
     <ClCompile Include="Source\Game\Map\TerrainTypes.cpp" />
     <ClCompile Include="Source\Game\Players\AIPlayer.cpp" />
+    <ClCompile Include="Source\Game\Players\AIProfile.cpp" />
     <ClCompile Include="Source\Game\SaveGame.cpp" />
     <ClCompile Include="Source\Game\Systems\BattleSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\CoverageSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\DiplomacySystem.cpp" />
     <ClCompile Include="Source\Game\Systems\DynastySystem.cpp" />
     <ClCompile Include="Source\Game\Systems\EconomySystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\FogSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\ForestrySystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\MarketSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\MovementSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\PoliticsSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\PopulationSystem.cpp" />
+    <ClCompile Include="Source\Game\Systems\RoadSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\SettlementSystem.cpp" />
     <ClCompile Include="Source\Game\Systems\Simulation.cpp" />
     <ClCompile Include="Source\Game\WorldGenerator.cpp" />
@@ -149,6 +157,7 @@
     <ClCompile Include="Source\Scenes\EditorSceneUI.cpp" />
     <ClCompile Include="Source\Scenes\GameScene.cpp" />
     <ClCompile Include="Source\Scenes\GameSceneHud.cpp" />
+    <ClCompile Include="Source\Scenes\GameSceneMinimap.cpp" />
     <ClCompile Include="Source\Scenes\MainMenuScene.cpp" />
     <ClCompile Include="Source\Scenes\PartySetupScene.cpp" />
     <ClCompile Include="Source\Scenes\SceneFactory.cpp" />
@@ -161,13 +170,17 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\Application.h" />
+    <ClInclude Include="Source\Audio\AudioClip.h" />
+    <ClInclude Include="Source\Audio\AudioSystem.h" />
     <ClInclude Include="Source\Core\Config.h" />
     <ClInclude Include="Source\Core\EventBus.h" />
     <ClInclude Include="Source\Core\ImageIO.h" />
+    <ClInclude Include="Source\Core\JobSystem.h" />
     <ClInclude Include="Source\Core\Json.h" />
     <ClInclude Include="Source\Core\Log.h" />
     <ClInclude Include="Source\Core\Math.h" />
     <ClInclude Include="Source\Core\Paths.h" />
+    <ClInclude Include="Source\Core\Profiler.h" />
     <ClInclude Include="Source\Core\Random.h" />
     <ClInclude Include="Source\Core\Settings.h" />
     <ClInclude Include="Source\Core\Singleton.h" />
@@ -184,6 +197,7 @@
     <ClInclude Include="Source\Game\Map\Pathfinder.h" />
     <ClInclude Include="Source\Game\Map\TerrainTypes.h" />
     <ClInclude Include="Source\Game\Players\AIPlayer.h" />
+    <ClInclude Include="Source\Game\Players\AIProfile.h" />
     <ClInclude Include="Source\Game\Players\HumanPlayer.h" />
     <ClInclude Include="Source\Game\Players\IPlayer.h" />
     <ClInclude Include="Source\Game\SaveGame.h" />
@@ -192,10 +206,13 @@
     <ClInclude Include="Source\Game\Systems\DiplomacySystem.h" />
     <ClInclude Include="Source\Game\Systems\DynastySystem.h" />
     <ClInclude Include="Source\Game\Systems\EconomySystem.h" />
+    <ClInclude Include="Source\Game\Systems\FogSystem.h" />
     <ClInclude Include="Source\Game\Systems\ForestrySystem.h" />
+    <ClInclude Include="Source\Game\Systems\MarketSystem.h" />
     <ClInclude Include="Source\Game\Systems\MovementSystem.h" />
     <ClInclude Include="Source\Game\Systems\PoliticsSystem.h" />
     <ClInclude Include="Source\Game\Systems\PopulationSystem.h" />
+    <ClInclude Include="Source\Game\Systems\RoadSystem.h" />
     <ClInclude Include="Source\Game\Systems\SettlementSystem.h" />
     <ClInclude Include="Source\Game\Systems\Simulation.h" />
     <ClInclude Include="Source\Game\WorldGenerator.h" />

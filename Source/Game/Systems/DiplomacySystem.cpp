@@ -191,7 +191,18 @@ namespace woc
         if (a && b)
         {
             world.Log(a->name + " оголошує війну державі " + b->name, Color::FromRGB(0xC05046));
+
+            // A war the player is in is not a line in a corner. It is shouted.
+            if (a->playerControlled || b->playerControlled)
+            {
+                const bool ours = a->playerControlled;
+                world.Announce(ours ? "ВІЙНА ОГОЛОШЕНА" : "НАМ ОГОЛОСИЛИ ВІЙНУ",
+                               ours ? "Ви йдете війною на державу " + b->name
+                                    : a->name + " іде війною на вас",
+                               Color::FromRGB(0xD8342A));
+            }
         }
+        world.Flare(from, to, Color::FromRGB(0xD8342A));
     }
 
     void DiplomacySystem::MakePeace(World& world, EntityId from, EntityId to)
@@ -241,6 +252,7 @@ namespace woc
         const State* a = world.FindState(from);
         const State* b = world.FindState(to);
         if (a && b) world.Log(a->name + " і " + b->name + " укладають союз", Color::FromRGB(0xC9A227));
+        world.Flare(from, to, Color::FromRGB(0x3F8FE0));
     }
 
     bool DiplomacySystem::ArrangeMarriage(World& world, EntityId from, EntityId to)
@@ -290,6 +302,7 @@ namespace woc
         }
 
         world.Log(groom->FullName() + " бере за дружину " + bride->FullName(), Color::FromRGB(0xC9A227));
+        world.Flare(from, to, Color::FromRGB(0x4CC46A));
         return true;
     }
 
@@ -345,11 +358,21 @@ namespace woc
                 }
                 else if (stance == DiplomaticStance::Neutral && opinion > 30.0f && random.Chance(0.04f))
                 {
-                    SignNonAggression(world, id, other);
+                    // Between two AIs a pact is simply signed; with the player it is asked.
+                    if (target->playerControlled) Propose(world, id, other, DiplomaticAction::Kind::NonAggression);
+                    else SignNonAggression(world, id, other);
                 }
                 else if (stance == DiplomaticStance::NonAggression && opinion > 55.0f && random.Chance(0.02f))
                 {
-                    FormAlliance(world, id, other);
+                    if (target->playerControlled) Propose(world, id, other, DiplomaticAction::Kind::Alliance);
+                    else FormAlliance(world, id, other);
+                }
+                else if (stance != DiplomaticStance::War && opinion > 45.0f && random.Chance(0.015f))
+                {
+                    // A match between the two houses: offered to the player, arranged with
+                    // anyone else.
+                    if (target->playerControlled) Propose(world, id, other, DiplomaticAction::Kind::ArrangeMarriage);
+                    else ArrangeMarriage(world, id, other);
                 }
                 else if (stance == DiplomaticStance::War && opinion > -10.0f && random.Chance(0.06f))
                 {
@@ -357,5 +380,82 @@ namespace woc
                 }
             }
         }
+    }
+
+    // =====================================================================================
+    // Offers waiting on the player
+    // =====================================================================================
+
+    const char* DiplomacySystem::OfferTitle(DiplomaticAction::Kind kind)
+    {
+        switch (kind)
+        {
+        case DiplomaticAction::Kind::NonAggression:  return "ПРОПОЗИЦІЯ ПАКТУ";
+        case DiplomaticAction::Kind::Alliance:       return "ПРОПОЗИЦІЯ СОЮЗУ";
+        case DiplomaticAction::Kind::ArrangeMarriage: return "ПРОПОЗИЦІЯ ШЛЮБУ";
+        case DiplomaticAction::Kind::OfferPeace:     return "ПРОПОЗИЦІЯ МИРУ";
+        default:                                     return "ПОСОЛЬСТВО";
+        }
+    }
+
+    const char* DiplomacySystem::OfferBody(DiplomaticAction::Kind kind)
+    {
+        switch (kind)
+        {
+        case DiplomaticAction::Kind::NonAggression:
+            return "пропонує пакт про ненапад. Жодна зі сторін не підніме меча на іншу, "
+                   "поки пакт не буде розірвано.";
+        case DiplomaticAction::Kind::Alliance:
+            return "пропонує оборонний союз. Кожен стає на захист іншого, коли на того "
+                   "нападуть.";
+        case DiplomaticAction::Kind::ArrangeMarriage:
+            return "пропонує шлюб між домами. Родичання вабить обидва двори одне до одного "
+                   "надовго.";
+        case DiplomaticAction::Kind::OfferPeace:
+            return "пропонує скінчити війну й розійтися з перемир'ям.";
+        default:
+            return "шле посольство.";
+        }
+    }
+
+    void DiplomacySystem::Propose(World& world, EntityId from, EntityId to, DiplomaticAction::Kind kind)
+    {
+        // One embassy at a time about one thing: an AI that rolls the same offer twice in a
+        // month should not stack two identical dialogs on the player.
+        for (const DiplomaticOffer& waiting : m_offers)
+        {
+            if (waiting.from == from && waiting.to == to && waiting.kind == kind) return;
+        }
+        m_offers.push_back({ from, to, kind, world.Time().TotalDays() });
+    }
+
+    void DiplomacySystem::AcceptOffer(World& world)
+    {
+        if (m_offers.empty()) return;
+        const DiplomaticOffer offer = m_offers.front();
+        m_offers.pop_front();
+
+        switch (offer.kind)
+        {
+        case DiplomaticAction::Kind::NonAggression:   SignNonAggression(world, offer.from, offer.to); break;
+        case DiplomaticAction::Kind::Alliance:        FormAlliance(world, offer.from, offer.to); break;
+        case DiplomaticAction::Kind::ArrangeMarriage: ArrangeMarriage(world, offer.from, offer.to); break;
+        case DiplomaticAction::Kind::OfferPeace:      MakePeace(world, offer.from, offer.to); break;
+        default: break;
+        }
+    }
+
+    void DiplomacySystem::DeclineOffer(World& world)
+    {
+        if (m_offers.empty()) return;
+        const DiplomaticOffer offer = m_offers.front();
+        m_offers.pop_front();
+
+        // A refusal is not an insult, but it is remembered.
+        AdjustOpinion(world, offer.to, offer.from,
+                      -ConfigManager::Get().Float("diplomacy/refusalOpinion", 8.0f));
+
+        const State* asker = world.FindState(offer.from);
+        if (asker) world.Log("Відмовлено посольству держави " + asker->name, Color::FromRGB(0x9AA3AB));
     }
 }
