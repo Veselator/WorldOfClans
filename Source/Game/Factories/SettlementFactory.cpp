@@ -20,6 +20,7 @@ namespace woc
         settlement.raceId = request.raceId;
         settlement.faithId = request.faithId.empty() ? race.defaultFaith : request.faithId;
         settlement.owner = request.owner;
+        settlement.mirrored = random.Chance(0.5f);
         settlement.name = request.name.empty()
             ? NamePool::Get().SettlementName(request.raceId, random)
             : request.name;

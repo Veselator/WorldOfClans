@@ -1,4 +1,5 @@
 #include "CoverageSystem.h"
+#include "../World/EntityJson.h"
 #include "FogSystem.h"
 #include "../Factories/EvaluatorFactory.h"
 #include "../Map/Pathfinder.h"
@@ -77,7 +78,12 @@ namespace woc
         clanIds.reserve(world.Clans().size());
         for (const auto& [id, clan] : world.Clans())
         {
-            if (!clan.eliminated) clanIds.push_back(id);
+            if (clan.eliminated) continue;
+            // Robbers hold no ground and are painted on no map: giving them a slot would
+            // only spend one of the hundred and twenty-odd there are.
+            const State* state = world.StateOfClan(id);
+            if (state && state->outlaw) continue;
+            clanIds.push_back(id);
         }
         std::sort(clanIds.begin(), clanIds.end());
 
@@ -140,6 +146,8 @@ namespace woc
 
             // Only cities and castles project coverage; villages merely sit inside it.
             if (settlement.owner == kInvalidId || strength <= 0.001f) continue;
+            // A seat still being raised speaks for nobody: the walls are not up yet.
+            if (settlement.UnderConstruction()) continue;
 
             const Clan* clan = world.FindClan(settlement.owner);
             if (!clan) continue;
@@ -150,6 +158,12 @@ namespace woc
             job.seeds.push_back({ settlement.id, static_cast<u32>(map.Index(origin)),
                                   strength * costPerUnit, clan->paletteSlot });
         }
+
+        // Seeds in id order. The flood settles ties by who came first, and "first" must not
+        // mean "whichever the container happened to hold first" - that differs between a
+        // world that grew over a party and the same world read back from a snapshot.
+        std::sort(job.seeds.begin(), job.seeds.end(),
+                  [](const Seed& a, const Seed& b) { return a.settlement < b.settlement; });
 
         // Who may take ground from whom. A clan always keeps its own; anyone may move into
         // no man's land; taking a rival's country means being at war with him. A slot whose
@@ -275,8 +289,14 @@ namespace woc
         // Settlement -> (clan slot, influence slot), resolved once instead of per tile.
         std::vector<std::pair<EntityId, std::pair<u8, u8>>> slotOf;
         slotOf.reserve(world.Settlements().size());
-        for (const auto& [id, settlement] : world.Settlements())
+        // Slots handed out in id order, not in whatever order the container holds the towns.
+        std::vector<EntityId> settlementIds;
+        settlementIds.reserve(world.Settlements().size());
+        for (const auto& [id, settlement] : world.Settlements()) settlementIds.push_back(id);
+        std::sort(settlementIds.begin(), settlementIds.end());
+        for (EntityId id : settlementIds)
         {
+            const Settlement& settlement = *world.FindSettlement(id);
             const Clan* clan = world.FindClan(settlement.owner);
             if (!clan) continue;
 
@@ -315,6 +335,7 @@ namespace woc
         // reach acknowledges him. It never takes anything away - a village already sworn to
         // a lord leaves him only by revolt or by conquest, never because a border moved.
         AbsorbIndependentVillages(world);
+        TransferSeatsHeldByPresence(world);
 
         RefreshLayer(world);
     }
@@ -322,6 +343,31 @@ namespace woc
     // =========================================================================================
     // The coloured layer
     // =========================================================================================
+
+    Json CoverageSystem::ToJson() const
+    {
+        Json node = Json::MakeObject();
+        node["clans"] = EncodeIdList(m_slotToClan);
+        node["holders"] = EncodeIdList(m_slotToHolder);
+        Json tiles = Json::MakeArray();
+        for (u32 count : m_tilesPerSlot) tiles.Push(static_cast<i64>(count));
+        node["tilesPerSlot"] = tiles;
+        node["dirty"] = m_dirty;
+        return node;
+    }
+
+    void CoverageSystem::FromJson(const Json& node)
+    {
+        // A pass still running belongs to the world being replaced.
+        if (m_pending.valid()) m_pending.get();
+        m_busy = false;
+        m_slotToClan = DecodeIdList(node["clans"]);
+        m_slotToHolder = DecodeIdList(node["holders"]);
+        m_tilesPerSlot.clear();
+        for (const Json& count : node["tilesPerSlot"].AsArray()) m_tilesPerSlot.push_back(static_cast<u32>(count.AsNumber(0.0)));
+        m_dirty = node["dirty"].AsBool(true);
+        m_lastMask.clear();
+    }
 
     void CoverageSystem::SetMode(MapMode mode, World& world)
     {
@@ -503,6 +549,14 @@ namespace woc
             // A village that has just revolted must be retaken by force, not by paperwork.
             if (world.Time().TotalDays() < settlement.rebelliousUntilDay) continue;
 
+            // Nor does a place with men standing in it change hands because a border moved.
+            bool held = false;
+            for (const auto& [cohortId, cohort] : world.Cohorts())
+            {
+                if (cohort.garrisonOf == id && !cohort.IsEmpty()) { held = true; break; }
+            }
+            if (held) continue;
+
             const Coord tile = map.ToTile(settlement.position);
             const u8 slot = map.At(tile).owner;
             if (slot == 0 || slot >= m_slotToClan.size()) continue;
@@ -528,6 +582,47 @@ namespace woc
             village->loyalty = std::clamp(loyalty, 0.1f, 1.0f);
 
             world.Log(village->name + " визнає владу роду " + clan->name, clan->color);
+        }
+    }
+
+    void CoverageSystem::TransferSeatsHeldByPresence(World& world)
+    {
+        MapData& map = world.MutableMap();
+        std::vector<std::pair<EntityId, EntityId>> handovers;   // settlement -> clan
+
+        for (const auto& [id, settlement] : world.Settlements())
+        {
+            if (!settlement.heldByPresence || settlement.IsIndependent()) continue;
+
+            const Coord tile = map.ToTile(settlement.position);
+            const u8 slot = map.At(tile).owner;
+            if (slot == 0 || slot >= m_slotToClan.size()) continue;
+
+            const EntityId ground = m_slotToClan[slot];
+            if (ground == kInvalidId || ground == settlement.owner) continue;
+
+            // Only a different realm takes it over; passing between two houses of the same
+            // realm is an internal matter and no business of the borders'.
+            const Clan* holder = world.FindClan(settlement.owner);
+            const Clan* claimant = world.FindClan(ground);
+            if (!holder || !claimant || holder->state == claimant->state) continue;
+
+            handovers.emplace_back(id, ground);
+        }
+
+        for (const auto& [settlementId, clanId] : handovers)
+        {
+            Settlement* settlement = world.FindSettlement(settlementId);
+            Clan* claimant = world.FindClan(clanId);
+            if (!settlement || !claimant) continue;
+
+            if (Clan* previous = world.FindClan(settlement->owner)) previous->RemoveSettlement(settlementId);
+            settlement->owner = clanId;
+            claimant->AddSettlement(settlementId);
+            settlement->loyalty = std::clamp(settlement->loyalty * 0.8f, 0.15f, 1.0f);
+
+            world.Log(settlement->name + " опиняється під рукою роду " + claimant->name +
+                      ": навколо вже його земля", claimant->color);
         }
     }
 

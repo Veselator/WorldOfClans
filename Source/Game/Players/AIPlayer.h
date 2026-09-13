@@ -35,6 +35,14 @@ namespace woc
     public:
         void OnThink(World& world, i32 day) override;
 
+        /// Whether this lord agrees to what `from` proposes. Temperament decides part of it -
+        /// an aggressive prince dislikes being tied down, a cautious one likes friends - and
+        /// the state of things decides the rest: who is stronger, and, for a peace, who is
+        /// winning the war. Deterministic, so every machine in a party reaches the same answer.
+        bool WeighOffer(const World& world, EntityId from, i32 kind) const;
+        Json ToJson() const override;
+        void FromJson(const Json& node) override;
+
     private:
         /// The shape of a realm: where its weight lies and how far it reaches.
         struct RealmShape
@@ -45,6 +53,11 @@ namespace woc
         };
 
         void ManageEconomy(World& world, Clan& clan);
+        /// Opens whatever quarry lies inside the realm's borders and is worth the outlay.
+        /// Stone is the one resource a realm cannot buy its way out of needing - no quarry,
+        /// no walls - and the building queue alone never gets one dug, because a quarry on
+        /// the map is not a building.
+        void WorkTheMines(World& world, Clan& clan);
         /// How badly the realm wants more of a resource, as a multiplier on a building's
         /// score. Comparing raw output figures across resources is meaningless - three
         /// stone is not three silver - and this is what makes them comparable.
@@ -66,6 +79,9 @@ namespace woc
         /// The own holding nearest to hostile ground: where idle armies gather.
         EntityId PickRallyPoint(World& world, const Clan& clan) const;
         /// Sends an army to stand near the rally seat rather than disappear inside it.
+        /// Sends this host after the nearest band of robbers, or the camp they ride out
+        /// of, when it is strong enough for the work. True if it was given such an order.
+        bool ClearOutlaws(World& world, const Clan& clan, Cohort& cohort);
         void Muster(World& world, Cohort& cohort, EntityId rally) const;
         /// Total fighting strength of a realm, for judging whether a war is worth it.
         static f32 StateStrength(const World& world, EntityId stateId);

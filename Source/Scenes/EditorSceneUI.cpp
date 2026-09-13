@@ -1,5 +1,6 @@
 // EditorSceneUI.cpp - the editor's toolbar and inspector.
 #include "EditorScene.h"
+#include "MapGenPanel.h"
 #include "SceneManager.h"
 
 #include "../Core/Config.h"
@@ -119,7 +120,9 @@ namespace woc
             m_tool == EditorTool::Forest || m_tool == EditorTool::Field ||
             m_tool == EditorTool::Road)
         {
-            ui.Stepper(row(24.0f), "Радіус", m_brushRadius, 4, 200);
+            // The radius rides the same kind of slider as the strength: a stepper counting
+            // in ones is no way to set a brush two hundred units wide.
+            ui.Slider(row(24.0f), "Радіус", m_brushRadius, 4.0f, 200.0f);
             ui.Slider(row(24.0f), "Сила", m_brushStrength, 0.05f, 1.0f);
         }
 
@@ -198,29 +201,10 @@ namespace woc
         y += 8.0f;
         ui.Label(row(20.0f), "ГЕНЕРАЦІЯ", theme.accent);
 
-        // Either the designer names a seed, or the generator draws one and writes it back
-        // into the field, so a world that turns out well can always be found again.
-        const Rect randomRow = row(24.0f);
-        ui.Toggle(randomRow, "Випадкове зерно", m_randomSeed);
-        ui.TooltipIfHovered(randomRow, "Зерно вибереться саме, і його буде вписано в поле нижче.");
-
-        ui.Label(row(18.0f), "Зерно", theme.textDim);
-        if (m_randomSeed)
-        {
-            const Rect r = row(24.0f);
-            renderer.UIRect(r, theme.panelAlt.Scaled(0.8f));
-            renderer.UIRectOutline(r, theme.border, 1.0f);
-            renderer.UIText(m_seedText, { r.x + 6.0f, r.y + (r.h - renderer.TextHeight()) * 0.5f },
-                            theme.textDim);
-        }
-        else if (ui.TextField(row(24.0f), "genSeed", m_seedText, 10))
-        {
-            m_genSeed = std::max(1, std::atoi(m_seedText.c_str()));
-        }
-        ui.Slider(row(24.0f), "Масштаб", m_genScale, 1.0f, 8.0f);
-        ui.Slider(row(24.0f), "Рівень моря", m_genSeaLevel, 0.2f, 0.7f);
-        ui.Slider(row(24.0f), "Гори", m_genMountains, 0.55f, 0.95f);
-        ui.Slider(row(24.0f), "Ліси", m_genForest, 0.0f, 1.0f);
+        // The party screen's own panel, drawn here over the same settings object, so a world
+        // shaped in the editor and a world shaped from the menu are shaped by the same means.
+        y = MapGenPanel::Draw(ui, innerX, y, innerW, m_mapGen, m_genPanel, m_genRealms);
+        MapGenerator::Shared() = m_mapGen;
 
         if (ui.Button(row(28.0f), "Згенерувати ландшафт")) GenerateTerrain();
 

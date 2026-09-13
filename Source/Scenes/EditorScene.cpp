@@ -1,4 +1,5 @@
 #include "EditorScene.h"
+#include "MapGenPanel.h"
 #include "SceneManager.h"
 
 #include "../Audio/AudioSystem.h"
@@ -8,6 +9,7 @@
 #include "../Core/Log.h"
 #include "../Core/Paths.h"
 #include "../Core/Random.h"
+#include "../Game/Map/MapGenerator.h"
 #include "../Game/Factories/NamePool.h"
 #include "../Game/Factories/SettlementFactory.h"
 #include "../Game/Systems/CoverageSystem.h"
@@ -23,52 +25,6 @@
 
 namespace woc
 {
-    namespace
-    {
-        /// Value noise with smooth interpolation; cheap, deterministic and good enough
-        /// for a designer-facing height map they will then paint over anyway.
-        f32 Hash2D(i32 x, i32 y, u32 seed)
-        {
-            u32 h = static_cast<u32>(x) * 374761393u + static_cast<u32>(y) * 668265263u + seed * 2246822519u;
-            h = (h ^ (h >> 13)) * 1274126177u;
-            return static_cast<f32>((h ^ (h >> 16)) & 0xFFFFFF) / static_cast<f32>(0xFFFFFF);
-        }
-
-        f32 SmoothNoise(f32 x, f32 y, u32 seed)
-        {
-            const i32 x0 = static_cast<i32>(std::floor(x));
-            const i32 y0 = static_cast<i32>(std::floor(y));
-            const f32 fx = x - static_cast<f32>(x0);
-            const f32 fy = y - static_cast<f32>(y0);
-
-            const f32 ux = fx * fx * (3.0f - 2.0f * fx);
-            const f32 uy = fy * fy * (3.0f - 2.0f * fy);
-
-            const f32 a = Hash2D(x0, y0, seed);
-            const f32 b = Hash2D(x0 + 1, y0, seed);
-            const f32 c = Hash2D(x0, y0 + 1, seed);
-            const f32 d = Hash2D(x0 + 1, y0 + 1, seed);
-
-            return Lerp(Lerp(a, b, ux), Lerp(c, d, ux), uy);
-        }
-
-        f32 Fbm(f32 x, f32 y, u32 seed, int octaves)
-        {
-            f32 total = 0.0f;
-            f32 amplitude = 1.0f;
-            f32 frequency = 1.0f;
-            f32 normalisation = 0.0f;
-            for (int i = 0; i < octaves; ++i)
-            {
-                total += SmoothNoise(x * frequency, y * frequency, seed + static_cast<u32>(i) * 71u) * amplitude;
-                normalisation += amplitude;
-                amplitude *= 0.5f;
-                frequency *= 2.0f;
-            }
-            return normalisation > 0.0f ? total / normalisation : 0.0f;
-        }
-    }
-
     void EditorScene::OnEnter()
     {
         Renderer::Get().SetTerrainEnabled(true);
@@ -79,6 +35,11 @@ namespace woc
 
         NamePool::Get().Load();
         World::Get().Reset();
+
+        // The editor opens on the same generator settings the menu was last left with.
+        m_mapGen = MapGenerator::Shared();
+        m_genPanel.SyncText(m_mapGen);
+        m_undo.clear();
 
         m_maps = MapLoader::ListMaps();
         LoadThumbnails();
@@ -169,106 +130,24 @@ namespace woc
     void EditorScene::GenerateTerrain()
     {
         World& world = World::Get();
+        // Generating over a map is the largest edit there is, so it is also undoable.
+        PushUndo();
         world.Reset();
 
-        // A random seed is drawn here rather than typed, and then written back into the
-        // field: whatever the generator used is what the designer sees, and can keep.
-        if (m_randomSeed)
-        {
-            m_genSeed = GlobalRandom().Range(1, 2000000000);
-            m_seedText = std::to_string(m_genSeed);
-        }
+        // A drawn seed is written back into the field: whatever the generator used is what
+        // the designer sees, and can keep.
+        const u32 seed = MapGenerator::Generate(world.MutableMap(), m_description, m_mapGen, m_mapName);
+        m_mapGen.seed = seed;
+        m_mapGen.width = m_description.width;
+        m_mapGen.height = m_description.height;
+        m_genPanel.SyncText(m_mapGen);
+        MapGenerator::Shared() = m_mapGen;
 
-        MapData& map = world.MutableMap();
-        const u32 tilePixels = 4;
-        map.Allocate(static_cast<u32>(m_genWidth), static_cast<u32>(m_genHeight), tilePixels);
-
-        const TerrainDatabase& terrainDb = TerrainDatabase::Get();
-        const u8 water = terrainDb.IndexOf("water");
-        const u8 coast = terrainDb.IndexOf("coast");
-        const u8 plainRich = terrainDb.IndexOf("plainRich");
-        const u8 plain = terrainDb.IndexOf("plain");
-        const u8 plainPoor = terrainDb.IndexOf("plainPoor");
-        const u8 hills = terrainDb.IndexOf("hills");
-        const u8 highland = terrainDb.IndexOf("highland");
-        const u8 mountain = terrainDb.IndexOf("mountain");
-
-        const u32 seed = static_cast<u32>(m_genSeed);
-        const f32 tilesX = static_cast<f32>(map.TileWidth());
-        const f32 tilesY = static_cast<f32>(map.TileHeight());
-
-        for (u32 ty = 0; ty < map.TileHeight(); ++ty)
-        {
-            for (u32 tx = 0; tx < map.TileWidth(); ++tx)
-            {
-                const f32 u = static_cast<f32>(tx) / tilesX;
-                const f32 v = static_cast<f32>(ty) / tilesY;
-
-                // Radial falloff turns the noise field into an island rather than a slab.
-                const f32 dx = (u - 0.5f) * 2.0f;
-                const f32 dy = (v - 0.5f) * 2.0f;
-                const f32 falloff = 1.0f - std::min(1.0f, std::sqrt(dx * dx * 0.75f + dy * dy * 1.15f));
-
-                f32 elevation = Fbm(u * m_genScale, v * m_genScale, seed, 5);
-                elevation = elevation * 0.65f + falloff * 0.55f;
-                elevation = Clamp01(elevation);
-
-                const f32 moisture = Fbm(u * m_genScale * 1.7f + 11.0f, v * m_genScale * 1.7f + 7.0f,
-                                         seed + 991u, 4);
-
-                Tile& tile = map.At({ static_cast<i32>(tx), static_cast<i32>(ty) });
-                tile.height = elevation;
-                tile.field = 0.0f;
-
-                if (elevation < m_genSeaLevel)
-                {
-                    tile.terrain = water;
-                    tile.height = 0.0f;
-                    tile.forest = 0.0f;
-                }
-                else if (elevation < m_genSeaLevel + 0.035f)
-                {
-                    tile.terrain = coast;
-                    tile.forest = 0.0f;
-                }
-                else if (elevation > m_genMountains + 0.13f)
-                {
-                    tile.terrain = mountain;
-                    tile.forest = 0.0f;
-                }
-                else if (elevation > m_genMountains)
-                {
-                    tile.terrain = highland;
-                    tile.forest = moisture > 0.72f ? 0.2f : 0.0f;
-                }
-                else if (elevation > m_genMountains - 0.12f)
-                {
-                    tile.terrain = hills;
-                    tile.forest = moisture > 0.55f ? (moisture - 0.55f) * 1.4f : 0.0f;
-                }
-                else
-                {
-                    // Soil quality follows moisture: the wettest lowlands are the richest.
-                    tile.terrain = moisture > 0.62f ? plainRich : (moisture > 0.4f ? plain : plainPoor);
-                    const f32 forestNoise = Fbm(u * m_genScale * 2.6f + 31.0f, v * m_genScale * 2.6f + 17.0f,
-                                                seed + 4211u, 4);
-                    tile.forest = forestNoise > (1.0f - m_genForest)
-                        ? Clamp01((forestNoise - (1.0f - m_genForest)) * 3.0f)
-                        : 0.0f;
-                }
-            }
-        }
-
-        map.RebuildElevation(ConfigManager::Get().Int("render/terrainSmoothPasses", 4));
-        map.ComputeFordableWater(ConfigManager::Get().Int("map/fordableWaterRadius", 3));
-
+        m_genWidth = static_cast<i32>(m_description.width);
+        m_genHeight = static_cast<i32>(m_description.height);
         m_description.name = m_mapName;
-        m_description.width = static_cast<u32>(m_genWidth);
-        m_description.height = static_cast<u32>(m_genHeight);
-        m_description.tilePixels = tilePixels;
-        m_description.seed = seed;
 
-        RebuildColorLayer();
+        m_dirtyColor = false;
         PushToRenderer(true);
 
         m_message = "Ландшафт згенеровано";
@@ -277,23 +156,7 @@ namespace woc
 
     void EditorScene::RebuildColorLayer()
     {
-        MapData& map = World::Get().MutableMap();
-        std::vector<u8>& pixels = map.ColorPixels();
-        pixels.assign(static_cast<size_t>(map.PixelWidth()) * map.PixelHeight() * 4, 255);
-
-        for (u32 y = 0; y < map.PixelHeight(); ++y)
-        {
-            for (u32 x = 0; x < map.PixelWidth(); ++x)
-            {
-                const Coord tile = map.ToTile({ static_cast<f32>(x), static_cast<f32>(y) });
-                const u32 color = TerrainDatabase::Get().At(map.At(tile).terrain).color;
-                u8* texel = pixels.data() + (static_cast<size_t>(y) * map.PixelWidth() + x) * 4;
-                texel[0] = static_cast<u8>((color >> 16) & 0xFF);
-                texel[1] = static_cast<u8>((color >> 8) & 0xFF);
-                texel[2] = static_cast<u8>(color & 0xFF);
-                texel[3] = 255;
-            }
-        }
+        MapGenerator::RebuildColorLayer(World::Get().MutableMap());
         m_dirtyColor = false;
     }
 
@@ -356,11 +219,72 @@ namespace woc
     // Editing
     // =====================================================================================
 
+    void EditorScene::PushUndo()
+    {
+        World& world = World::Get();
+        const MapData& map = world.Map();
+        if (!map.IsValid()) return;
+
+        EditorSnapshot step;
+        step.tiles = map.Tiles();
+        step.pixelWidth = map.PixelWidth();
+        step.pixelHeight = map.PixelHeight();
+        step.tilePixels = map.TilePixels();
+        step.objects = world.SaveObjects(false);
+
+        m_undo.push_back(std::move(step));
+
+        const size_t limit = static_cast<size_t>(
+            std::max(2, ConfigManager::Get().Int("editor/undoSteps", 24)));
+        while (m_undo.size() > limit) m_undo.pop_front();
+    }
+
+    void EditorScene::Undo()
+    {
+        if (m_undo.empty())
+        {
+            m_message = "Скасовувати більше нічого";
+            m_messageTimer = 2.0f;
+            return;
+        }
+
+        World& world = World::Get();
+        MapData& map = world.MutableMap();
+
+        EditorSnapshot step = std::move(m_undo.back());
+        m_undo.pop_back();
+
+        // A step may have changed the size of the map - a generation, a resize - so the
+        // grid is rebuilt to what it was before the tiles are poured back into it.
+        if (map.PixelWidth() != step.pixelWidth || map.PixelHeight() != step.pixelHeight ||
+            map.TilePixels() != step.tilePixels)
+        {
+            map.Allocate(step.pixelWidth, step.pixelHeight, step.tilePixels);
+            m_description.width = step.pixelWidth;
+            m_description.height = step.pixelHeight;
+            m_genWidth = static_cast<i32>(step.pixelWidth);
+            m_genHeight = static_cast<i32>(step.pixelHeight);
+        }
+        map.Tiles() = std::move(step.tiles);
+        world.AdoptObjects(step.objects);
+
+        m_inspected = kInvalidId;
+        m_dirtyColor = false;
+        RebuildColorLayer();
+        map.RebuildElevation(ConfigManager::Get().Int("render/terrainSmoothPasses", 4));
+        map.ComputeFordableWater(ConfigManager::Get().Int("map/fordableWaterRadius", 3));
+        PushToRenderer(true);
+
+        m_message = "Скасовано";
+        m_messageTimer = 2.0f;
+    }
+
     void EditorScene::ApplyBrush(const Vec2& mapPosition, bool erase)
     {
         MapData& map = World::Get().MutableMap();
         const Coord center = map.ToTile(mapPosition);
-        const i32 span = std::max(1, m_brushRadius / static_cast<i32>(map.TilePixels()));
+
+        const i32 span = std::max(1, static_cast<i32>(m_brushRadius) / static_cast<i32>(map.TilePixels()));
         const f32 spanF = static_cast<f32>(span);
 
         for (i32 dy = -span; dy <= span; ++dy)
@@ -389,10 +313,17 @@ namespace woc
                         const TerrainInfo& info = TerrainDatabase::Get().At(tile.terrain);
 
                         // Nothing here touches tile.height: that belongs to the height brush.
-                        // Water still clears what cannot grow in it, and needs the elevation
-                        // pass so the shoreline is re-flattened, but the painted height is
-                        // kept so land repainted here later comes back at its old level.
-                        if (info.water) { tile.forest = 0.0f; tile.field = 0.0f; }
+                        // The elevation pass still runs so a repainted shoreline is
+                        // re-flattened, but the painted height is kept so land repainted
+                        // here later comes back at its old level.
+                        //
+                        // What the ground can no longer carry goes with it. Paint a wood
+                        // over to sand, hillside, highland or open water and the trees are
+                        // gone, because a wood does not stand there - the same rule the
+                        // forest and field brushes refuse to break, applied from the other
+                        // side. Otherwise the map keeps orphan groves on a mountainside
+                        // that no brush ever put there on purpose.
+                        if (!info.arable) { tile.forest = 0.0f; tile.field = 0.0f; }
                         m_dirtyColor = true;
                         m_dirtyHeight = true;
                     }
@@ -417,7 +348,12 @@ namespace woc
                 }
 
                 case EditorTool::Forest:
-                    tile.forest = Clamp01(tile.forest + (erase ? -amount : amount));
+                    // The same rule the living world plays by: a wood stands on the plains,
+                    // on any of the three soils, and not where there is already a plough.
+                    if (erase || (TerrainDatabase::Get().At(tile.terrain).arable && tile.field <= 0.2f))
+                    {
+                        tile.forest = Clamp01(tile.forest + (erase ? -amount : amount));
+                    }
                     break;
 
                 case EditorTool::Field:
@@ -710,12 +646,32 @@ namespace woc
 
         Input& input = Input::Get();
         UI& ui = UI::Get();
+
+        // The way back, on the key every editor in the world uses for it. It is read before
+        // the mouse guard, so it works with the pointer anywhere on the screen.
+        if (!ui.WantsKeyboard() && input.IsKeyDown(Key::Control) && input.WasKeyPressed(Key::Z))
+        {
+            Undo();
+            return;
+        }
+
         if (ui.WantsMouse()) return;
 
         const Vec2 mapPosition = ScreenToTerrain(input.MousePosition());
 
         const bool painting = input.IsMouseDown(MouseButton::Left);
         const bool erasing = input.IsMouseDown(MouseButton::Right);
+
+        // One stroke is one step back, however long the button is held: the state is filed
+        // when the button goes down and not again until it comes up.
+        const bool strokeStarts = input.WasMousePressed(MouseButton::Left) ||
+                                  input.WasMousePressed(MouseButton::Right);
+        if (strokeStarts && !m_strokeOpen)
+        {
+            PushUndo();
+            m_strokeOpen = true;
+        }
+        if (!painting && !erasing) m_strokeOpen = false;
 
         switch (m_tool)
         {
@@ -874,7 +830,7 @@ namespace woc
         renderer.UIRect({ 0.0f, 0.0f, viewport.x, viewport.y }, theme.shadow.WithAlpha(0.72f));
 
         const f32 width = 620.0f;
-        const f32 height = 560.0f;
+        const f32 height = 780.0f;
         const Rect panel{ (viewport.x - width) * 0.5f, (viewport.y - height) * 0.5f, width, height };
         ui.Panel(panel, "Карти");
 
@@ -889,84 +845,141 @@ namespace woc
             return r;
         };
 
-        // --- what already exists ------------------------------------------------------------
-        ui.Label(row(20.0f), "ВІДКРИТИ", theme.accent);
-
-        const f32 listHeight = 210.0f;
-        const Rect listArea{ innerX, y, innerW, listHeight };
-        y += listHeight + 10.0f;
-
-        const f32 entryHeight = 58.0f;
-        const Rect content = ui.BeginScroll(listArea, m_maps.size() * entryHeight, m_browserScroll);
-        if (m_maps.empty())
+        // --- which half of the window ---------------------------------------------------------
         {
-            ui.LabelCentered({ content.x, content.y + 12.0f, content.w, 22.0f },
-                             "Жодної карти ще немає", theme.textDim);
-        }
-        for (size_t i = 0; i < m_maps.size(); ++i)
-        {
-            const Rect r{ content.x, content.y + i * entryHeight, content.w, entryHeight - 4.0f };
-            const bool current = m_maps[i].folder == m_folderName;
-            if (ui.ListItem(r, "", current))
+            const Rect tabs = row(28.0f);
+            const f32 half = (tabs.w - 8.0f) * 0.5f;
+            if (ui.ListItem({ tabs.x, tabs.y, half, tabs.h }, "Вибір карти",
+                            m_browserTab == BrowserTab::Open))
             {
-                if (LoadMap(m_maps[i].folder)) m_browserOpen = false;
+                m_browserTab = BrowserTab::Open;
+            }
+            if (ui.ListItem({ tabs.x + half + 8.0f, tabs.y, half, tabs.h }, "Генерація",
+                            m_browserTab == BrowserTab::Generate))
+            {
+                m_browserTab = BrowserTab::Generate;
+            }
+        }
+        y += 4.0f;
+
+        if (m_browserTab == BrowserTab::Open)
+        {
+            // --- what already exists ------------------------------------------------------------
+            ui.Label(row(20.0f), "ВІДКРИТИ", theme.accent);
+
+            const f32 listHeight = 210.0f;
+            const Rect listArea{ innerX, y, innerW, listHeight };
+            y += listHeight + 10.0f;
+
+            const f32 entryHeight = 58.0f;
+            const Rect content = ui.BeginScroll(listArea, m_maps.size() * entryHeight, m_browserScroll);
+            if (m_maps.empty())
+            {
+                ui.LabelCentered({ content.x, content.y + 12.0f, content.w, 22.0f },
+                                 "Жодної карти ще немає", theme.textDim);
+            }
+            for (size_t i = 0; i < m_maps.size(); ++i)
+            {
+                const Rect r{ content.x, content.y + i * entryHeight, content.w, entryHeight - 4.0f };
+                const bool current = m_maps[i].folder == m_folderName;
+                if (ui.ListItem(r, "", current))
+                {
+                    if (LoadMap(m_maps[i].folder)) m_browserOpen = false;
+                }
+
+                // The map's own portrait, kept in proportion inside a fixed frame.
+                const Rect frame{ r.x + 5.0f, r.y + 4.0f, 78.0f, r.h - 8.0f };
+                renderer.UIRect(frame, theme.panelAlt);
+                const u32 thumbnail = i < m_thumbnails.size() ? m_thumbnails[i] : 0;
+                if (thumbnail != 0 && m_maps[i].width > 0 && m_maps[i].height > 0)
+                {
+                    const f32 want = static_cast<f32>(m_maps[i].width) / static_cast<f32>(m_maps[i].height);
+                    f32 w = frame.w;
+                    f32 h = w / want;
+                    if (h > frame.h) { h = frame.h; w = h * want; }
+                    renderer.UIImage(thumbnail,
+                                     { frame.x + (frame.w - w) * 0.5f, frame.y + (frame.h - h) * 0.5f, w, h },
+                                     Color(1.0f, 1.0f, 1.0f, 1.0f));
+                }
+
+                renderer.UIText(m_maps[i].name, { frame.Right() + 10.0f, r.y + 8.0f },
+                                current ? theme.accent : theme.textStrong);
+
+                char size[48];
+                std::snprintf(size, sizeof(size), "%u x %u", m_maps[i].width, m_maps[i].height);
+                renderer.UIText(size, { frame.Right() + 10.0f, r.y + 28.0f }, theme.textDim, 0.9f);
+            }
+            ui.EndScroll(content.y + m_maps.size() * entryHeight);
+
+            // --- or something new ----------------------------------------------------------------
+            renderer.UIRect({ innerX, y, innerW, 1.0f }, theme.border);
+            y += 10.0f;
+            ui.Label(row(20.0f), "НОВА ПОРОЖНЯ КАРТА", theme.accent);
+
+            {
+                const Rect r = row(24.0f);
+                ui.Label({ r.x, r.y, 110.0f, r.h }, "Назва", theme.textDim);
+                ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "newMapName", m_newName, 40);
+            }
+            {
+                const Rect r = row(24.0f);
+                ui.Label({ r.x, r.y, 110.0f, r.h }, "Тека", theme.textDim);
+                ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "newMapFolder", m_newFolder, 32);
+            }
+            {
+                // A free size, not a menu of three: the map is whatever the designer needs.
+                const Rect r = row(24.0f);
+                const f32 halfWidth = (r.w - 12.0f) * 0.5f;
+                ui.Stepper({ r.x, r.y, halfWidth, r.h }, "Ширина", m_newWidth, 256, 8192);
+                ui.Stepper({ r.x + halfWidth + 12.0f, r.y, halfWidth, r.h }, "Висота", m_newHeight, 256, 8192);
+            }
+            {
+                const Rect r = row(18.0f);
+                char note[96];
+                std::snprintf(note, sizeof(note), "Сітка симуляції: %d x %d клітин",
+                              m_newWidth / 4, m_newHeight / 4);
+                ui.Label(r, note, theme.textDim);
             }
 
-            // The map's own portrait, kept in proportion inside a fixed frame.
-            const Rect frame{ r.x + 5.0f, r.y + 4.0f, 78.0f, r.h - 8.0f };
-            renderer.UIRect(frame, theme.panelAlt);
-            const u32 thumbnail = i < m_thumbnails.size() ? m_thumbnails[i] : 0;
-            if (thumbnail != 0 && m_maps[i].width > 0 && m_maps[i].height > 0)
+            if (ui.Button(row(30.0f), "Створити карту")) CreateMap();
+        }
+        else
+        {
+            // --- the generator, with everything it has ---------------------------------------
             {
-                const f32 want = static_cast<f32>(m_maps[i].width) / static_cast<f32>(m_maps[i].height);
-                f32 w = frame.w;
-                f32 h = w / want;
-                if (h > frame.h) { h = frame.h; w = h * want; }
-                renderer.UIImage(thumbnail,
-                                 { frame.x + (frame.w - w) * 0.5f, frame.y + (frame.h - h) * 0.5f, w, h },
-                                 Color(1.0f, 1.0f, 1.0f, 1.0f));
+                const Rect r = row(24.0f);
+                ui.Label({ r.x, r.y, 110.0f, r.h }, "Назва", theme.textDim);
+                ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "genMapName", m_newName, 40);
+            }
+            {
+                const Rect r = row(24.0f);
+                ui.Label({ r.x, r.y, 110.0f, r.h }, "Тека", theme.textDim);
+                ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "genMapFolder", m_newFolder, 32);
+            }
+            {
+                const Rect r = row(24.0f);
+                ui.Stepper(r, "Держав (для островів)", m_genRealms, 2, 12);
             }
 
-            renderer.UIText(m_maps[i].name, { frame.Right() + 10.0f, r.y + 8.0f },
-                            current ? theme.accent : theme.textStrong);
+            const f32 listBottom = panel.Bottom() - 92.0f;
+            const Rect area{ innerX, y, innerW, listBottom - y };
+            // The panel is long; it scrolls, and the estimate only has to be generous.
+            const Rect content = ui.BeginScroll(area, 840.0f, m_browserGenScroll);
+            const f32 usedTo = MapGenPanel::Draw(ui, content.x, content.y, content.w,
+                                                 m_mapGen, m_genPanel, m_genRealms);
+            MapGenerator::Shared() = m_mapGen;
+            ui.EndScroll(usedTo);
+            y = listBottom + 6.0f;
 
-            char size[48];
-            std::snprintf(size, sizeof(size), "%u x %u", m_maps[i].width, m_maps[i].height);
-            renderer.UIText(size, { frame.Right() + 10.0f, r.y + 28.0f }, theme.textDim, 0.9f);
+            if (ui.Button(row(30.0f), "Створити й згенерувати"))
+            {
+                m_mapName = m_newName;
+                m_folderName = m_newFolder;
+                m_description.folder = m_folderName;
+                GenerateTerrain();
+                m_browserOpen = false;
+            }
         }
-        ui.EndScroll(content.y + m_maps.size() * entryHeight);
-
-        // --- or something new ----------------------------------------------------------------
-        renderer.UIRect({ innerX, y, innerW, 1.0f }, theme.border);
-        y += 10.0f;
-        ui.Label(row(20.0f), "НОВА КАРТА", theme.accent);
-
-        {
-            const Rect r = row(24.0f);
-            ui.Label({ r.x, r.y, 110.0f, r.h }, "Назва", theme.textDim);
-            ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "newMapName", m_newName, 40);
-        }
-        {
-            const Rect r = row(24.0f);
-            ui.Label({ r.x, r.y, 110.0f, r.h }, "Тека", theme.textDim);
-            ui.TextField({ r.x + 115.0f, r.y, r.w - 115.0f, r.h }, "newMapFolder", m_newFolder, 32);
-        }
-        {
-            // A free size, not a menu of three: the map is whatever the designer needs.
-            const Rect r = row(24.0f);
-            const f32 halfWidth = (r.w - 12.0f) * 0.5f;
-            ui.Stepper({ r.x, r.y, halfWidth, r.h }, "Ширина", m_newWidth, 256, 8192);
-            ui.Stepper({ r.x + halfWidth + 12.0f, r.y, halfWidth, r.h }, "Висота", m_newHeight, 256, 8192);
-        }
-        {
-            const Rect r = row(18.0f);
-            char note[96];
-            std::snprintf(note, sizeof(note), "Сітка симуляції: %d x %d клітин",
-                          m_newWidth / 4, m_newHeight / 4);
-            ui.Label(r, note, theme.textDim);
-        }
-
-        if (ui.Button(row(30.0f), "Створити карту")) CreateMap();
 
         // --- and the way out ------------------------------------------------------------------
         const f32 buttonY = panel.Bottom() - 44.0f;
@@ -989,7 +1002,7 @@ namespace woc
         {
             const Vec2 viewport = Renderer::Get().ViewportSize();
             const f32 width = 620.0f;
-            const f32 height = 560.0f;
+            const f32 height = 780.0f;
             UI::Get().SetModalRegion({ (viewport.x - width) * 0.5f, (viewport.y - height) * 0.5f,
                                        width, height });
         }
@@ -1047,7 +1060,7 @@ namespace woc
         {
             const Vec2 mapPosition = ScreenToTerrain(Input::Get().MousePosition());
             renderer.DrawSprite(SpriteId::Circle, mapPosition, map.WorldHeightAtMap(mapPosition),
-                                static_cast<f32>(m_brushRadius) * 2.0f,
+                                m_brushRadius * 2.0f,
                                 Theme::Get().accent.WithAlpha(0.25f), 0.5f);
         }
     }

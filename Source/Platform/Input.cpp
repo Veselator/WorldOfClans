@@ -81,6 +81,8 @@ namespace woc
         case VK_RIGHT:     return Key::Right;
         case VK_UP:        return Key::Up;
         case VK_DOWN:      return Key::Down;
+        case VK_HOME:      return Key::Home;
+        case VK_END:       return Key::End;
         case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:       return Key::Shift;
         case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL: return Key::Control;
         case VK_MENU: case VK_LMENU: case VK_RMENU:          return Key::Alt;

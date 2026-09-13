@@ -55,6 +55,20 @@ namespace woc
         node["loyalty"] = loyalty;
         node["quarryRevealed"] = quarryRevealed;
         node["rebelliousUntilDay"] = rebelliousUntilDay;
+        if (mirrored) node["mirrored"] = true;
+        // Not recomputed from nothing each tick: a siege ground down over weeks, and the
+        // figures the next month's sums start from.
+        node["siegeProgress"] = siegeProgress;
+        node["besiegedBy"] = EncodeId(besiegedBy);
+        node["lastProduction"] = lastProduction;
+        node["coverageStrength"] = coverageStrength;
+        node["newLordUntilDay"] = newLordUntilDay;
+        node["heldByPresence"] = heldByPresence;
+        if (foundingDaysLeft > 0.0f)
+        {
+            node["foundingDaysLeft"] = foundingDaysLeft;
+            node["foundingDaysTotal"] = foundingDaysTotal;
+        }
 
         Json built = Json::MakeArray();
         for (const std::string& building : buildings) built.Push(building);
@@ -71,6 +85,22 @@ namespace woc
                 queue.Push(item);
             }
             node["construction"] = queue;
+        }
+
+        if (!recruitQueue.empty())
+        {
+            Json queue = Json::MakeArray();
+            for (const RecruitOrder& order : recruitQueue)
+            {
+                Json item = Json::MakeObject();
+                item["role"] = static_cast<i64>(order.role);
+                item["cohort"] = EncodeId(order.cohort);
+                item["heads"] = static_cast<i64>(order.headCount);
+                item["hoursTotal"] = order.hoursTotal;
+                item["hoursLeft"] = order.hoursLeft;
+                queue.Push(item);
+            }
+            node["recruitQueue"] = queue;
         }
 
         if (conversionDaysLeft > 0)
@@ -96,6 +126,15 @@ namespace woc
         settlement.loyalty = node["loyalty"].AsFloat(0.75f);
         settlement.quarryRevealed = node["quarryRevealed"].AsBool(false);
         settlement.rebelliousUntilDay = node["rebelliousUntilDay"].AsInt(0);
+        settlement.mirrored = node["mirrored"].AsBool(false);
+        settlement.siegeProgress = node["siegeProgress"].AsFloat(0.0f);
+        settlement.besiegedBy = DecodeId(node["besiegedBy"]);
+        settlement.lastProduction = node["lastProduction"].AsFloat(0.0f);
+        settlement.coverageStrength = node["coverageStrength"].AsFloat(0.0f);
+        settlement.newLordUntilDay = node["newLordUntilDay"].AsInt(0);
+        settlement.heldByPresence = node["heldByPresence"].AsBool(false);
+        settlement.foundingDaysLeft = node["foundingDaysLeft"].AsFloat(0.0f);
+        settlement.foundingDaysTotal = node["foundingDaysTotal"].AsFloat(0.0f);
 
         for (const Json& building : node["buildings"].AsArray())
             settlement.buildings.push_back(building.AsString());
@@ -106,6 +145,17 @@ namespace woc
             order.buildingId = item["building"].AsString();
             order.daysRemaining = item["daysRemaining"].AsInt(0);
             settlement.construction.push_back(std::move(order));
+        }
+
+        for (const Json& item : node["recruitQueue"].AsArray())
+        {
+            RecruitOrder order;
+            order.role = static_cast<UnitRole>(item["role"].AsInt(1));
+            order.cohort = DecodeId(item["cohort"]);
+            order.headCount = static_cast<u32>(item["heads"].AsInt(1));
+            order.hoursTotal = item["hoursTotal"].AsFloat(1.0f);
+            order.hoursLeft = item["hoursLeft"].AsFloat(0.0f);
+            settlement.recruitQueue.push_back(order);
         }
 
         settlement.conversionTarget = node["conversionTarget"].AsString();

@@ -18,6 +18,7 @@ namespace woc
         i32 TotalDays() const { return m_totalDays; }
         /// Restores an absolute day, used when loading a save.
         void SetTotalDays(i32 day) { m_totalDays = day; m_fraction = 0.0f; }
+        void SetFraction(f32 fraction) { m_fraction = fraction; }
         i32 Year() const { return m_startYear + m_totalDays / (m_daysPerMonth * m_monthsPerYear); }
         i32 Month() const { return (m_totalDays / m_daysPerMonth) % m_monthsPerYear + 1; }
         i32 Day() const { return m_totalDays % m_daysPerMonth + 1; }

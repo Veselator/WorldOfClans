@@ -2,6 +2,8 @@
 #include "../../Core/Config.h"
 #include "../../Core/Log.h"
 
+#include <algorithm>
+
 namespace woc
 {
     namespace
@@ -28,6 +30,8 @@ namespace woc
             defensive.reachBeyondBorder = 90.0f;
             defensive.homeGarrisonShare = 0.75f;
             defensive.allowRaiding = false;
+            defensive.refillBelow = 0.8f;
+            defensive.refillUntil = 0.95f;
             defensive.warAppetite = 0.04f;
             defensive.warStrengthRatio = 2.2f;
 
@@ -46,6 +50,8 @@ namespace woc
             aggressive.reachBeyondBorder = 620.0f;
             aggressive.homeGarrisonShare = 0.25f;
             aggressive.allowRaiding = true;
+            aggressive.refillBelow = 0.4f;
+            aggressive.refillUntil = 0.7f;
             aggressive.warAppetite = 0.45f;
             aggressive.warStrengthRatio = 1.05f;
 
@@ -70,6 +76,8 @@ namespace woc
         profile.reachBeyondBorder = node["reachBeyondBorder"].AsFloat(profile.reachBeyondBorder);
         profile.homeGarrisonShare = node["homeGarrisonShare"].AsFloat(profile.homeGarrisonShare);
         profile.allowRaiding = node["allowRaiding"].AsBool(profile.allowRaiding);
+        profile.refillBelow = node["refillBelow"].AsFloat(profile.refillBelow);
+        profile.refillUntil = std::max(profile.refillBelow, node["refillUntil"].AsFloat(profile.refillUntil));
 
         profile.warAppetite = node["warAppetite"].AsFloat(profile.warAppetite);
         profile.warStrengthRatio = node["warStrengthRatio"].AsFloat(profile.warStrengthRatio);

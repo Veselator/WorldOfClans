@@ -389,7 +389,12 @@ namespace woc
             }
             else
             {
-                std::snprintf(buf, sizeof(buf), "%.6g", m_number);
+                // The shortest text that reads back as exactly the same number. Six
+                // significant digits used to be written here, which turned an order to march
+                // to 1234.567 into an order to march to 1234.57 on every machine but the one
+                // that gave it - and a lockstep party out of step on the very first order.
+                const auto result = std::to_chars(buf, buf + sizeof(buf) - 1, m_number);
+                *result.ptr = '\0';
             }
             out += buf;
             break;

@@ -16,6 +16,7 @@
     "ownerTint": 0.22,
     "thematicTint": 0.62,
     "borderWidth": 0.7,
+    "smoothBorderScale": 2.6,
     "terrainMeshStep": 3,
     "terrainSmoothPasses": 4,
     "water": {
@@ -52,6 +53,13 @@
       "offset": 6.0
     },
     "battleShake": 1.6,
+    "pickRadius": 20.0,
+    "//settlementPickPad": "Запас клікабельної зони поселення понад розмір значка",
+    "settlementPickPad": 1.35,
+    "dragThreshold": 6.0,
+    "//revoltMark": "Кулак над поселенням, що повстало: розмір, перебіг понад одиницю",
+    "revoltMarkSize": 22.0,
+    "revoltMarkOvershoot": 1.25,
     "spriteScale": {
       "settlement": 26.0,
       "cohort": 20.0,
@@ -73,6 +81,16 @@
   "sprites": {
     "file": "WoCVisual.png",
     "tileSize": 16,
+    "//unitIcons": "Малі знаки родів війська в спрайтшиті: [x, y, ширина, висота] у пікселях",
+    "unitIcons": {
+      "swordsman": [128, 16, 16, 16],
+      "archer": [144, 16, 16, 16],
+      "cavalry": [160, 16, 16, 16],
+      "horseArcher": [0, 32, 16, 16],
+      "aristocrat": [16, 32, 16, 16]
+    },
+    "unitIconGap": 1.5,
+    "unitIconLift": 1.5,
     "order": [
       "Human", "Elf", "Dwarf", "Cohort", "Village",
       "City", "Castle", "Circle", "Forest", "Quarry", "Field"
@@ -141,6 +159,8 @@
   },
 
   "simulation": {
+    "//tickDays": "Довжина одного кроку симуляції в днях. У мультиплеєрі всі машини рахують ті самі кроки",
+    "tickDays": 0.0416667,
     "daysPerSecond": 1.0,
     "daysPerMonth": 30,
     "monthsPerYear": 12,
@@ -148,6 +168,7 @@
     "speedSteps": [0.0, 0.5, 1.0, 2.0, 4.0, 8.0],
     "defaultSpeedIndex": 2,
     "economyTickDays": 14,
+    "autosaveDays": 0,
     "populationTickDays": 30,
     "forestryTickDays": 30,
     "aiTickDays": 15
@@ -164,9 +185,20 @@
     "roadMultiplier": 0.45
   },
 
+  "net": {
+    "//net": "Мультиплеєр (lockstep): кожна машина рахує світ сама, мережею йдуть лише накази. Раз на скільки кроків машини звіряють відбиток світу",
+    "checksumEveryTicks": 24
+  },
+
+  "editor": {
+    "//undoSteps": "Скільки кроків редактор памятає для Ctrl+Z",
+    "undoSteps": 24
+  },
+
   "map": {
     "fordableWaterRadius": 3,
     "minimapWidth": 384,
+    "generatorSizeStep": 128,
     "colorMatchTolerance": 24
   },
 
@@ -209,8 +241,15 @@
     "desertionRate": 0.35
   },
 
+  "recruitment": {
+    "//garrison": "Поповнення залоги коштом міщан: скільки на день, скільки людей мусить лишитися, і по чому голова",
+    "garrisonRefillPerDay": 0.02,
+    "garrisonPopulationFloor": 160,
+    "refillCostPerHead": 0.45
+  },
+
   "population": {
-    "baseGrowthRate": 0.012,
+    "baseGrowthRate": 0.015,
     "prosperityGrowthFactor": 0.02,
     "loyaltyGrowthFactor": 0.008,
     "overcrowdingPenalty": 0.5,
@@ -222,18 +261,42 @@
     "prosperityDrift": 0.01,
     "loyaltyDrift": 0.012,
     "loyaltyDistancePenalty": 0.00035,
+    "//kin": "Поселення свого народу і своєї віри: власна прихильність, послаблена відстань, і час на звикання до нового пана",
+    "loyaltyKinBonus": 0.05,
+    "loyaltyKinDistance": 0.35,
+    "loyaltyNewLordPenalty": 0.05,
+    "newLordDays": 240,
     "loyaltyForeignRacePenalty": 0.18,
     "loyaltyForeignFaithPenalty": 0.12,
-    "revoltThreshold": 0.35,
-    "revoltBaseChance": 0.02,
-    "revoltForeignRaceChance": 0.16,
-    "revoltForeignFaithChance": 0.06,
-    "revoltUncoveredFactor": 2.5,
-    "revoltGarrisonFactor": 0.2,
-    "revoltCooldownDays": 720
+    "revoltThreshold": 0.30,
+    "revoltBaseChance": 0.012,
+    "revoltForeignRaceChance": 0.075,
+    "revoltForeignFaithChance": 0.030,
+    "revoltUncoveredFactor": 1.8,
+    "revoltGarrisonFactor": 0.12,
+    "revoltCooldownDays": 720,
+    "revoltMarkSeconds": 3.2,
+
+    "//revolt": "Скільки повстанців стає до зброї: частка людності, з розкидом",
+    "rebelShareOfPopulation": 0.06,
+    "rebelShareSpread": 0.4,
+    "rebelMinHeads": 24,
+    "rebelMaxHeads": 320,
+    "rebelMoraleBonus": 0.15
   },
 
   "forestry": {
+    "//planting": "Висадка лісу: скільки коштує, скільки росте і як далеко сягає",
+    "plantRadius": 38.0,
+    "//plot": "Ділянка — тисяча квадратних одиниць карти; за неї й рахують",
+    "plantMoneyPerPlot": 5.0,
+    "plantFoodPerPlot": 1.6,
+    "plantDaysPerPlot": 6.0,
+    "plantMinDays": 240.0,
+    "plantMaxDays": 1400.0,
+    "plantTargetDensity": 0.85,
+    "plantMaxDistanceFromSeat": 620.0,
+
     "villageHarvestPerMonth": 0.9,
     "sawmillHarvestPerMonth": 4.5,
     "regrowthPerMonth": 0.35,
@@ -253,7 +316,18 @@
     "organisationHomeBonus": 1.6,
     "organisationSizeReference": 250.0,
     "revoltAnswerRange": 900.0,
+    "//training": "Наскільки швидко новобранці вчаться: за мурами, в таборі й на марші",
+    "trainingGarrisonBonus": 1.5,
+    "trainingCampFactor": 0.6,
+    "trainingMarchFactor": 0.2,
+
+    "//formation": "Проміжок між сусідніми загонами, коли гурт іде однією лавою",
+    "formationSpacing": 34.0,
+
     "splitOrganisationCost": 0.75,
+    "//mergeDistance": "Наскільки близько мають стояти загони, щоб їх можна було звести докупи",
+    "mergeDistance": 40.0,
+    "mergeOrganisationCost": 0.9,
     "fatiguePerDay": 0.02
   },
 
@@ -283,6 +357,17 @@
     "attritionPerDay": 0.012,
     "attritionKillShare": 0.25,
     "roundsPerDay": 4,
+
+    "//support": "Скільки радіусів зіткнення сягає підмога і що дає удар з флангу чи з тилу",
+    "//retreat": "Відступ: у який сектор дозволено відходити, і за якою межею військо просто гине",
+    "retreatSweepDegrees": 110.0,
+    "collapseOrganisation": 0.08,
+    "collapseStrength": 0.12,
+    "supportRadiusFactor": 2.2,
+    "flankCap": 0.85,
+    "flankMoralePerRound": 0.05,
+    "flankPowerPenalty": 0.35,
+
     "baseDamage": 0.06,
     "terrainDefenseWeight": 0.6,
     "heightAdvantagePerUnit": 0.012,
@@ -299,8 +384,44 @@
     "razeProsperityLoss": 0.6
   },
 
+  "bandits": {
+    "//bandits": "Розбійники: скільки таборів на карті, як часто вони збирають ватаги і що дає спалений табір",
+    "campsPerMillionPixels": 2.6,
+    "maxCamps": 24,
+    "bands": 4,
+    "campStrength": 60.0,
+    "minCover": 0.06,
+    "placementAttempts": 400,
+    "minDistanceFromSettlement": 190.0,
+    "minDistanceBetweenCamps": 260.0,
+
+    "musterDays": 90.0,
+    "maxBandsPerCamp": 3,
+    "minUnitsPerBand": 2,
+    "maxUnitsPerBand": 4,
+    "headsPerUnit": 28,
+    "replenishPerDay": 0.02,
+
+    "raidRange": 700.0,
+    "retreatStrength": 0.45,
+    "stormPace": 0.35,
+    "campSalvageWood": 3.0,
+    "campSalvageFood": 2.5
+  },
+
   "diplomacy": {
-    "truceDays": 360,
+    "truceDays": 30,
+    "//ai": "Як ІІ відповідає на пропозиції: схильність за характером і пороги згоди. Мир зважується на перебігу війни",
+    "ai": {
+      "temperDefensive": 0.45,
+      "temperCautious": 0.25,
+      "temperAggressive": -0.45,
+      "pactThreshold": 0.15,
+      "allianceThreshold": 0.55,
+      "marriageThreshold": 0.35,
+      "peaceThreshold": 0.0,
+      "peaceWinningBalance": 1.6
+    },
     "flareSeconds": 2.2,
     "allianceOpinionThreshold": 45,
     "warOpinionThreshold": -35,
@@ -336,10 +457,19 @@
 
     "daysPerKilometre": 7.0,
     "bridgeDaysPerKilometre": 90.0,
-    "bridgeRouteCost": 9.0
+    "bridgeRouteCost": 9.0,
+
+    "//effort": "Праця за метр залежить від землі: рівнина — 1, схили й гори — дорожче",
+    "slopeEffort": 1.8,
+    "forestEffort": 0.55,
+    "existingRoadEffort": 0.18,
+    "maxEffort": 3.2
   },
 
   "ai": {
+    "//outlaws": "На якій відстані ІІ бачить розбійників і з якою перевагою на них іде",
+    "outlawReach": 900.0,
+    "outlawRequiredEdge": 1.15,
     "aggression": 0.55,
     "expansionWeight": 1.0,
     "defenceWeight": 1.2,
@@ -350,10 +480,16 @@
     "scarcityCeiling": 3.2,
     "recruitTreasuryReserve": 120.0,
     "raidDistanceLimit": 900.0,
+    "//mines": "Як далеко від своїх земель ІІ ще шукає каменярню й скільки лишає в скарбниці",
+    "mineSearchRange": 520.0,
+    "mineTreasuryReserve": 200.0,
 
     "profiles": [
       {
         "id": "defensive",
+        "//refill": "Відводить військо на поповнення, коли його лишилося менше refillBelow, і тримає вдома до refillUntil",
+        "refillBelow": 0.8,
+        "refillUntil": 0.95,
         "name": "Оборонний",
         "economyWeight": 1.1,
         "defenceWeight": 1.9,
@@ -369,6 +505,9 @@
       },
       {
         "id": "cautious",
+        "//refill": "Відводить військо на поповнення, коли його лишилося менше refillBelow, і тримає вдома до refillUntil",
+        "refillBelow": 0.65,
+        "refillUntil": 0.9,
         "name": "Обережний",
         "economyWeight": 1.0,
         "defenceWeight": 1.3,
@@ -384,6 +523,9 @@
       },
       {
         "id": "aggressive",
+        "//refill": "Відводить військо на поповнення, коли його лишилося менше refillBelow, і тримає вдома до refillUntil",
+        "refillBelow": 0.4,
+        "refillUntil": 0.7,
         "name": "Войовничий",
         "economyWeight": 0.7,
         "defenceWeight": 0.8,

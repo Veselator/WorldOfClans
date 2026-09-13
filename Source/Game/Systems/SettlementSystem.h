@@ -45,8 +45,14 @@ namespace woc
         // --- commands ---------------------------------------------------------------------------
         bool StartConstruction(World& world, EntityId settlementId, const std::string& buildingId);
         bool CancelConstruction(World& world, EntityId settlementId, const std::string& buildingId);
-        /// Recruits a unit into `cohortId`, or into a new cohort when it is kInvalidId.
+        /// Pays for a company and puts it in the settlement's muster queue, bound for
+        /// `cohortId` (or the garrison, or a new one). Returns the settlement on success.
         EntityId Recruit(World& world, EntityId settlementId, EntityId cohortId, UnitRole role);
+        /// Takes an order out of the muster queue; the men go home and half the silver back.
+        bool CancelRecruit(World& world, EntityId settlementId, size_t index);
+        /// Moves every muster on by a fraction of a day - companies take hours, so they
+        /// cannot wait for the daily pass.
+        void TickMusters(World& world, f32 days);
         bool StartConversion(World& world, EntityId settlementId, const std::string& faithId);
         bool Raze(World& world, EntityId settlementId, EntityId actingClan);
         bool GrantIndependence(World& world, EntityId settlementId);
@@ -75,6 +81,8 @@ namespace woc
                        const std::string& name = std::string());
 
     private:
+        /// Advances the first order in the queue and stands the company up when it is done.
+        void MusterRecruits(World& world, Settlement& settlement, f32 days);
         SettlementSystem() = default;
         ~SettlementSystem() = default;
 

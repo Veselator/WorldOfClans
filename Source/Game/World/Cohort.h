@@ -14,6 +14,7 @@ namespace woc
         Attack,         // intercept an enemy cohort
         Besiege,        // stand before a settlement and reduce it
         Raid,           // plunder a settlement without taking it
+        Storm,          // burn out a robbers' camp: there is nothing there to besiege
         Patrol
     };
 
@@ -75,6 +76,13 @@ namespace woc
         f32 disengageDays = 0.0f;
         bool IsWithdrawing() const { return disengageDays > 0.0f; }
         EntityId garrisonOf = kInvalidId;   // settlement this cohort is stationed in
+        /// The robbers' camp this band came out of, and goes back to when it is mauled.
+        /// kInvalidId for everybody else, and for a band whose camp has been burnt.
+        EntityId homeCamp = kInvalidId;
+        /// The walls this host sat down in front of. Kept apart from the task, because a
+        /// relief army arriving clears the task and the siege would otherwise be forgotten
+        /// the moment the field battle began.
+        EntityId siegeTarget = kInvalidId;
 
         Task currentTask;
 

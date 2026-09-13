@@ -31,6 +31,9 @@
     <Filter Include="Source\Game\World">
       <UniqueIdentifier>{eaf8789d-c917-58bd-be90-8a116c28957e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source\Net">
+      <UniqueIdentifier>{282113a9-bd77-5243-9c6a-795445fd74c1}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source\Platform">
       <UniqueIdentifier>{5bbb670a-8913-529f-baf6-1bd260587aa4}</UniqueIdentifier>
     </Filter>
@@ -105,7 +108,13 @@
     <ClCompile Include="Source\Game\Factories\UnitFactory.cpp">
       <Filter>Source\Game\Factories</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Game\GameCommands.cpp">
+      <Filter>Source\Game</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Game\Map\MapData.cpp">
+      <Filter>Source\Game\Map</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Map\MapGenerator.cpp">
       <Filter>Source\Game\Map</Filter>
     </ClCompile>
     <ClCompile Include="Source\Game\Map\MapLoader.cpp">
@@ -125,6 +134,9 @@
     </ClCompile>
     <ClCompile Include="Source\Game\SaveGame.cpp">
       <Filter>Source\Game</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Game\Systems\BanditSystem.cpp">
+      <Filter>Source\Game\Systems</Filter>
     </ClCompile>
     <ClCompile Include="Source\Game\Systems\BattleSystem.cpp">
       <Filter>Source\Game\Systems</Filter>
@@ -207,6 +219,12 @@
     <ClCompile Include="Source\Game\World\World.cpp">
       <Filter>Source\Game\World</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Net\NetSession.cpp">
+      <Filter>Source\Net</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Net\Socket.cpp">
+      <Filter>Source\Net</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Platform\Input.cpp">
       <Filter>Source\Platform</Filter>
     </ClCompile>
@@ -249,7 +267,13 @@
     <ClCompile Include="Source\Scenes\GameSceneMinimap.cpp">
       <Filter>Source\Scenes</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Scenes\LobbyPanel.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Scenes\MainMenuScene.cpp">
+      <Filter>Source\Scenes</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Scenes\MapGenPanel.cpp">
       <Filter>Source\Scenes</Filter>
     </ClCompile>
     <ClCompile Include="Source\Scenes\PartySetupScene.cpp">
@@ -347,7 +371,13 @@
     <ClInclude Include="Source\Game\Factories\UnitFactory.h">
       <Filter>Source\Game\Factories</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Game\GameCommands.h">
+      <Filter>Source\Game</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Game\Map\MapData.h">
+      <Filter>Source\Game\Map</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Map\MapGenerator.h">
       <Filter>Source\Game\Map</Filter>
     </ClInclude>
     <ClInclude Include="Source\Game\Map\MapLoader.h">
@@ -373,6 +403,9 @@
     </ClInclude>
     <ClInclude Include="Source\Game\SaveGame.h">
       <Filter>Source\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Game\Systems\BanditSystem.h">
+      <Filter>Source\Game\Systems</Filter>
     </ClInclude>
     <ClInclude Include="Source\Game\Systems\BattleSystem.h">
       <Filter>Source\Game\Systems</Filter>
@@ -461,6 +494,12 @@
     <ClInclude Include="Source\Game\World\World.h">
       <Filter>Source\Game\World</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Net\NetSession.h">
+      <Filter>Source\Net</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Net\Socket.h">
+      <Filter>Source\Net</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Platform\Input.h">
       <Filter>Source\Platform</Filter>
     </ClInclude>
@@ -503,7 +542,13 @@
     <ClInclude Include="Source\Scenes\IScene.h">
       <Filter>Source\Scenes</Filter>
     </ClInclude>
+    <ClInclude Include="Source\Scenes\LobbyPanel.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
     <ClInclude Include="Source\Scenes\MainMenuScene.h">
+      <Filter>Source\Scenes</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Scenes\MapGenPanel.h">
       <Filter>Source\Scenes</Filter>
     </ClInclude>
     <ClInclude Include="Source\Scenes\PartySetupScene.h">

@@ -24,6 +24,10 @@ namespace woc
         EntityId Split(World& world, EntityId cohortId, const std::vector<EntityId>& units);
         /// Splits a host down the middle - the common case, and what the panel's button does.
         EntityId SplitInHalf(World& world, EntityId cohortId);
+        /// Folds several hosts into the first of them. Everything that will fit under one
+        /// banner marches under it; anything over the ten-unit limit stays where it is, so
+        /// merging never quietly loses a detachment. Returns the surviving host.
+        EntityId Merge(World& world, const std::vector<EntityId>& cohorts);
         /// Sends a host home: the units are struck off and the men go back to the fields
         /// they were called from, so the upkeep stops and the countryside gets its people
         /// back. There is no undoing it, which is why the panel asks twice.
@@ -54,6 +58,10 @@ namespace woc
         void AdvanceCohort(World& world, Cohort& cohort, f32 days);
         /// Cost of a map unit of march at this spot, never zero or negative.
         static f32 TerrainCost(const MapData& map, const Vec2& position);
+        /// The nearest spot to `wanted` an army can actually stand on. A band of armies
+        /// told to take up position around a point must spread over the ground as it is,
+        /// not walk into a river because the ring said so.
+        static Vec2 NearestStanding(const MapData& map, const Vec2& wanted, f32 searchRadius = 120.0f);
         void OnArrival(World& world, Cohort& cohort);
         void UpdateSupply(World& world, Cohort& cohort, f32 days);
     };

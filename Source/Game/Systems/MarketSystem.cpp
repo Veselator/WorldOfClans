@@ -290,6 +290,12 @@ namespace woc
         Json prices = Json::MakeArray();
         for (size_t i = 0; i < kGoods; ++i) prices.Push(Json(m_price[i]));
         node["prices"] = prices;
+        Json trend = Json::MakeArray();
+        Json pressure = Json::MakeArray();
+        for (size_t i = 0; i < kGoods; ++i) { trend.Push(Json(m_trend[i])); pressure.Push(Json(m_pressure[i])); }
+        node["trend"] = trend;
+        node["pressure"] = pressure;
+        node["seeded"] = m_seeded;
         return node;
     }
 
@@ -297,10 +303,14 @@ namespace woc
     {
         Reset();
         const Json& prices = node["prices"];
-        for (size_t i = 0; i < kGoods && i < prices.Size(); ++i)
+        const Json& trend = node["trend"];
+        const Json& pressure = node["pressure"];
+        for (size_t i = 0; i < kGoods; ++i)
         {
-            m_price[i] = prices[i].AsFloat(m_price[i]);
+            if (i < prices.Size()) m_price[i] = prices[i].AsFloat(m_price[i]);
+            if (i < trend.Size()) m_trend[i] = trend[i].AsFloat(0.0f);
+            if (i < pressure.Size()) m_pressure[i] = pressure[i].AsFloat(0.0f);
         }
-        m_price[Index(ResourceType::Money)] = 1.0f;
+        m_seeded = node.Has("seeded") ? node["seeded"].AsBool(true) : prices.Size() > 0;
     }
 }

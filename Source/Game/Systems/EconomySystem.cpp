@@ -11,6 +11,24 @@ namespace woc
     {
         const Settlement* settlement = world.FindSettlement(settlementId);
         if (!settlement) return {};
+        return SettlementOutput(static_cast<const World&>(world), *settlement);
+    }
+
+    ResourceData EconomySystem::BuildingContribution(const World& world, const Settlement& settlement,
+                                                     const std::string& buildingId) const
+    {
+        Settlement without = settlement;
+        const auto it = std::find(without.buildings.begin(), without.buildings.end(), buildingId);
+        if (it == without.buildings.end()) return {};
+        without.buildings.erase(it);
+        return SettlementOutput(world, settlement) - SettlementOutput(world, without);
+    }
+
+    ResourceData EconomySystem::SettlementOutput(const World& world, const Settlement& settlementRef) const
+    {
+        const Settlement* settlement = &settlementRef;
+        // A site with the scaffolding still up feeds its own workmen and no one else.
+        if (settlement->UnderConstruction()) return {};
 
         Scope<ISettlementEvaluator> evaluator = EvaluatorFactory::Build(*settlement, world.Map());
 
@@ -108,6 +126,10 @@ namespace woc
         for (auto& [clanId, clan] : world.Clans())
         {
             if (clan.eliminated) continue;
+            // Outlaws keep no books. They eat what they take and they pay nobody, so there
+            // is no budget to run and no shortage to answer for.
+            const State* state = world.StateOfClan(clanId);
+            if (state && state->outlaw) continue;
 
             const ClanBudget budget = Preview(world, clanId);
             clan.resources += budget.net * share;

@@ -9,7 +9,6 @@ namespace woc
     {
         MainMenu,
         PartySetup,
-        Settings,
         Editor,
         Game
     };

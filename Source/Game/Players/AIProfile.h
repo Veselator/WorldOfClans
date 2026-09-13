@@ -43,6 +43,11 @@ namespace woc
         f32 reachBeyondBorder = 260.0f;
         /// Share of its armies held back on home soil.
         f32 homeGarrisonShare = 0.5f;
+        /// Below this share of its full muster a host is taken home to be filled up; it
+        /// stays there until it is back to refillUntil. A careful lord pulls out early, a
+        /// reckless one fights on with half a company.
+        f32 refillBelow = 0.65f;
+        f32 refillUntil = 0.9f;
         bool allowRaiding = true;
 
         // --- how it talks --------------------------------------------------------------

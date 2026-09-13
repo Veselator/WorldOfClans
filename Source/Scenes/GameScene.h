@@ -2,11 +2,15 @@
 #pragma once
 
 #include "IScene.h"
+
+#include <array>
 #include "../Core/Math.h"
 #include "../Core/ImageIO.h"
 #include "../Render/RenderTypes.h"
 #include "../Game/World/SettlementDatabase.h"
 #include "../Game/SaveGame.h"
+#include "../Game/Systems/DiplomacySystem.h"
+#include "../Core/Random.h"
 
 #include <vector>
 #include "../Game/World/World.h"
@@ -23,7 +27,7 @@ namespace woc
     class Clan;
     class State;
 
-    enum class SelectionKind { None, Settlement, Cohort, Mine };
+    enum class SelectionKind { None, Settlement, Cohort, Mine, BanditCamp };
 
     /// Which right-hand panel is showing.
     enum class PanelMode { Selection, Realm, Diplomacy, Chronicle };
@@ -49,6 +53,8 @@ namespace woc
         void UpdateSelection();
         void UpdateHotkeys();
         void IssueOrder(const Vec2& mapPosition);
+        /// Bands every one of the player's armies inside the dragged rectangle.
+        void SelectInBox(const Rect& box, bool additive);
 
         /// Picking works in screen space: an object's icon sits at the height of the ground
         /// it stands on, and unprojecting the cursor to a flat plane would miss it by more
@@ -56,6 +62,7 @@ namespace woc
         EntityId PickSettlement(const Vec2& screenPoint, f32 screenRadius) const;
         EntityId PickCohort(const Vec2& screenPoint, f32 screenRadius) const;
         EntityId PickMine(const Vec2& screenPoint, f32 screenRadius) const;
+        EntityId PickBanditCamp(const Vec2& screenPoint, f32 screenRadius) const;
         /// Cursor to map position, following the terrain rather than the z=0 plane.
         Vec2 ScreenToTerrain(const Vec2& screenPoint) const;
 
@@ -70,7 +77,14 @@ namespace woc
         /// The head count, written inside the banner square under the race icon.
         void DrawCohortLabels();
         void DrawMines();
+        /// The robbers' camps, and the bands that ride out of them.
+        void DrawBanditCamps();
         void DrawSelectionMarkers();
+        /// The rubber band, while the left button is being dragged across the map.
+        void DrawSelectionBox();
+        /// The fists thrown up over villages that have just risen: a scale that swells out
+        /// of nothing, overshoots, and settles - the way a thing lands when it has weight.
+        void DrawRevoltMarks(f32 deltaTime);
         void DrawSettlementLabels();
         void DrawOrderPreview();
         /// The short-lived lines struck between capitals when realms fall out or wed.
@@ -97,6 +111,8 @@ namespace woc
         void DrawSettlementMarket(const Rect& content, Settlement& settlement, f32& y);
         void DrawCohortPanel(const Rect& area, Cohort& cohort);
         void DrawMinePanel(const Rect& area, MineSite& mine);
+        /// What is known about a camp, and the order to burn it out.
+        void DrawBanditCampPanel(const Rect& area, BanditCamp& camp);
         void DrawUnitDetails(const Rect& area, Unit& unit);
         void DrawCharacterDetails(const Rect& area, const Character& character);
         void DrawRealmPanel(const Rect& area);
@@ -135,8 +151,28 @@ namespace woc
         void DrawSaveDialog();
         void DrawGameOver();
         void PerformSave(const std::string& slotName);
+        /// Writes the party out on its own clock, if the player has asked for it. Kept in a
+        /// slot of its own so it never treads on a save made by hand.
+        void UpdateAutosave();
+        /// Runs the party's half of the network: on the host, the orders that have arrived
+        /// and the snapshots that go back; on a client, the snapshot that has come in.
+        void UpdateNetwork(f32 deltaTime);
+        /// Sends an order through the command layer - straight into the world here, or to
+        /// the host when this machine is a client.
+        bool Order(const Json& command);
+        /// True when this machine is only watching the host's simulation.
+        bool IsNetworkGuest() const;
 
         Color ClanColor(EntityId clanId) const;
+        /// True in a multiplayer party, where an order takes effect at a tick rather than at
+        /// once - for the host exactly as for everybody else.
+        bool OrdersDeferred() const;
+        /// The embassy waiting on this player's answer, unless the answer is already sent.
+        const DiplomaticOffer* PendingOffer() const;
+        void AnswerOffer(bool accept);
+        /// Where a role's small mark sits in the sprite sheet, in pixels (x, y, w, h).
+        /// Read once from sprites/unitIcons and kept.
+        const Vec4& UnitIconPixels(UnitRole role) const;
         /// Adds a cohort to the current band, or starts a new one.
         void SelectCohort(EntityId cohortId, bool additive);
         bool IsSelected(EntityId cohortId) const;
@@ -166,11 +202,19 @@ namespace woc
         EntityId m_hoveredSettlement = kInvalidId;
         EntityId m_hoveredCohort = kInvalidId;
         EntityId m_hoveredMine = kInvalidId;
+        EntityId m_hoveredCamp = kInvalidId;
         EntityId m_diplomacyTarget = kInvalidId;
 
         PanelMode m_panelMode = PanelMode::Selection;
         SettlementTab m_settlementTab = SettlementTab::Overview;
+        mutable std::array<Vec4, static_cast<size_t>(UnitRole::Count)> m_unitIcons{};
+        mutable bool m_unitIconsLoaded = false;
         bool m_placingSettlement = false;
+        /// Choosing where the peasants will put in a wood.
+        bool m_placingForest = false;
+        /// The rubber band: where the drag started, and whether one is under way at all.
+        bool m_boxSelecting = false;
+        Vec2 m_boxAnchor;
         /// The site chosen for a new seat, held while the player names it.
         bool m_namingOpen = false;
         Vec2 m_pendingSite;
@@ -187,6 +231,15 @@ namespace woc
         i32 m_selectedSave = -1;
         f32 m_saveScroll = 0.0f;
         std::string m_mapFolder = "Test";
+        /// The game day the last automatic save was written on, so the interval is counted
+        /// in the world's calendar rather than in seconds at the keyboard.
+        i32 m_lastAutosaveDay = 0;
+        bool m_desyncReported = false;
+        i32 m_answeredOfferDay = -1;
+        EntityId m_answeredOfferFrom = kInvalidId;
+        /// For things that are this machine's alone, like a suggested town name: drawing
+        /// them from the world's generator would put the machines out of step.
+        Random m_localRandom;
         std::string m_panelKey;
         bool m_gameOver = false;
         bool m_victory = false;

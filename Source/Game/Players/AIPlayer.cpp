@@ -1,6 +1,7 @@
 #include "AIPlayer.h"
 #include "../Factories/SettlementFactory.h"
 #include "../Factories/UnitFactory.h"
+#include "../Systems/BanditSystem.h"
 #include "../Systems/BattleSystem.h"
 #include "../Systems/DiplomacySystem.h"
 #include "../Systems/EconomySystem.h"
@@ -19,6 +20,105 @@ namespace woc
         : IPlayer(stateId), m_random(seed)
     {
         m_profile = AIProfile::Pick(m_random);
+    }
+
+    bool AIPlayer::WeighOffer(const World& world, EntityId from, i32 kindValue) const
+    {
+        const auto kind = static_cast<DiplomaticAction::Kind>(kindValue);
+        const State* self = world.FindState(m_stateId);
+        const State* other = world.FindState(from);
+        if (!self || !other) return false;
+
+        ConfigManager& config = ConfigManager::Get();
+        const f32 opinion = DiplomacySystem::Get().Opinion(world, from, m_stateId);
+
+        // How much weight each side carries: arms first, then land.
+        const f32 ownStrength = StateStrength(world, m_stateId);
+        const f32 theirStrength = StateStrength(world, from);
+        const f32 armsRatio = ownStrength / std::max(1.0f, theirStrength);
+
+        auto holdings = [&](const State& state)
+        {
+            size_t count = 0;
+            for (EntityId clanId : state.clans)
+            {
+                if (const Clan* clan = world.FindClan(clanId)) count += clan->settlements.size();
+            }
+            return static_cast<f32>(std::max<size_t>(1, count));
+        };
+        const f32 landRatio = holdings(*self) / holdings(*other);
+        // Above one: this lord has the upper hand.
+        const f32 balance = armsRatio * std::sqrt(landRatio);
+
+        // Temperament: a positive lean towards agreeing, or against it.
+        f32 temper = 0.0f;
+        switch (m_profile.stance)
+        {
+        case AIStance::Defensive:  temper = config.Float("diplomacy/ai/temperDefensive", 0.45f); break;
+        case AIStance::Cautious:   temper = config.Float("diplomacy/ai/temperCautious", 0.25f); break;
+        case AIStance::Aggressive: temper = config.Float("diplomacy/ai/temperAggressive", -0.45f); break;
+        }
+
+        f32 score = 0.0f;
+        f32 threshold = 0.0f;
+        switch (kind)
+        {
+        case DiplomaticAction::Kind::NonAggression:
+            // A pact is cheap, and welcome from anybody stronger. An aggressive lord will not
+            // sign away a neighbour he could eat.
+            score = opinion / 50.0f + temper + (balance < 1.0f ? 0.3f : 0.0f) -
+                    (m_profile.stance == AIStance::Aggressive && balance > 1.5f ? 0.6f : 0.0f);
+            threshold = config.Float("diplomacy/ai/pactThreshold", 0.15f);
+            break;
+
+        case DiplomaticAction::Kind::Alliance:
+        case DiplomaticAction::Kind::ArrangeMarriage:
+            // An alliance binds: it has to be with somebody liked, and worth having - a realm
+            // with nothing to bring to a war is a liability, not an ally.
+            score = opinion / 40.0f + temper + (balance < 1.4f ? 0.2f : -0.35f);
+            threshold = kind == DiplomaticAction::Kind::Alliance
+                ? config.Float("diplomacy/ai/allianceThreshold", 0.55f)
+                : config.Float("diplomacy/ai/marriageThreshold", 0.35f);
+            break;
+
+        case DiplomaticAction::Kind::OfferPeace:
+        {
+            // Peace is weighed on the war itself. A lord who is losing wants out; a lord who is
+            // winning wants to finish what he started, and nobody on top makes peace with a
+            // kingdom down to one castle and no army.
+            const f32 losing = 1.0f / std::max(0.05f, balance) - 1.0f;   // > 0 when behind
+            score = losing + opinion / 100.0f + temper * 0.6f;
+            if (balance > config.Float("diplomacy/ai/peaceWinningBalance", 1.6f)) score -= 1.0f;
+            threshold = config.Float("diplomacy/ai/peaceThreshold", 0.0f);
+            break;
+        }
+
+        default:
+            return false;
+        }
+        return score > threshold;
+    }
+
+    Json AIPlayer::ToJson() const
+    {
+        Json node = Json::MakeObject();
+        node["profile"] = m_profile.id;
+        node["random"] = m_random.State();
+        node["lastExpansion"] = m_lastExpansionDay;
+        node["lastWar"] = m_lastWarDay;
+        return node;
+    }
+
+    void AIPlayer::FromJson(const Json& node)
+    {
+        const std::string profile = node["profile"].AsString();
+        for (const AIProfile& candidate : AIProfile::All())
+        {
+            if (candidate.id == profile) { m_profile = candidate; break; }
+        }
+        m_random.SetState(node["random"].AsString());
+        m_lastExpansionDay = node["lastExpansion"].AsInt(m_lastExpansionDay);
+        m_lastWarDay = node["lastWar"].AsInt(m_lastWarDay);
     }
 
     void AIPlayer::OnThink(World& world, i32 day)
@@ -129,6 +229,12 @@ namespace woc
         SettlementSystem& settlements = SettlementSystem::Get();
         const f32 reserve = config.Float("ai/recruitTreasuryReserve", 120.0f);
 
+        // The quarry comes before the building queue, not after it. A realm that spends
+        // every spare grivna on granaries the moment it has one never gets round to the
+        // stone, and a realm with no stone has no walls, no castles and no future - which
+        // is exactly what was happening.
+        WorkTheMines(world, clan);
+
         for (EntityId settlementId : clan.settlements)
         {
             const Settlement* settlement = world.FindSettlement(settlementId);
@@ -183,6 +289,46 @@ namespace woc
         }
 
         ConnectHoldings(world, clan);
+    }
+
+    void AIPlayer::WorkTheMines(World& world, Clan& clan)
+    {
+        ConfigManager& config = ConfigManager::Get();
+        SettlementSystem& settlements = SettlementSystem::Get();
+
+        const f32 reserve = config.Float("ai/mineTreasuryReserve", 200.0f);
+        if (clan.resources.money < reserve) return;
+        if (clan.settlements.empty()) return;
+
+        const f32 range = config.Float("ai/mineSearchRange", 520.0f);
+
+        // The richest site within reach that the borders already cover. Coverage is what
+        // MineOptions checks, so testing distance first only saves the lookups.
+        const MineSite* best = nullptr;
+        f32 bestValue = 0.0f;
+
+        for (const MineSite& mine : world.Mines())
+        {
+            if (mine.developed || mine.UnderWay()) continue;
+
+            f32 nearest = 1e9f;
+            for (EntityId settlementId : clan.settlements)
+            {
+                const Settlement* seat = world.FindSettlement(settlementId);
+                if (!seat) continue;
+                nearest = std::min(nearest, Distance(seat->position, mine.position));
+            }
+            if (nearest > range) continue;
+
+            const SettlementSystem::MineOffer offer = settlements.MineOptions(world, clan.id, mine.id);
+            if (!offer.allowed || !offer.affordable) continue;
+
+            // Worth what it yields, weighed by how badly the realm wants stone at all.
+            const f32 value = offer.stonePerMonth * ScarcityWeight(world, clan, ResourceType::Stone);
+            if (value > bestValue) { bestValue = value; best = &mine; }
+        }
+
+        if (best) settlements.DevelopMine(world, clan.id, best->id);
     }
 
     void AIPlayer::ConnectHoldings(World& world, Clan& clan)
@@ -373,6 +519,8 @@ namespace woc
                 const Settlement* settlement = world.FindSettlement(settlementId);
                 if (!settlement) continue;
                 if (settlement->kind == SettlementKind::Village) continue;
+                // A town is already mustering: wait for that company before paying for another.
+                if (!settlement->recruitQueue.empty()) continue;
 
                 EntityId garrison = kInvalidId;
                 i32 units = 0;
@@ -428,9 +576,33 @@ namespace woc
                 continue;
             }
 
-            // A weakened or unsupplied force goes home before it does anything else.
-            if (cohort->supply < 0.3f || world.CohortStrength(cohortId) < 40)
+            // How much of this host is actually standing. A company at half strength is
+            // worth taking home and filling up, not marching to a siege.
+            f32 muster = 0.0f;
             {
+                u32 standing = 0, establishment = 0;
+                for (EntityId unitId : cohort->units)
+                {
+                    const Unit* unit = world.FindUnit(unitId);
+                    if (!unit) continue;
+                    standing += unit->Strength();
+                    establishment += unit->establishment;
+                }
+                muster = establishment > 0 ? static_cast<f32>(standing) / static_cast<f32>(establishment)
+                                           : 1.0f;
+            }
+
+            // A weakened or unsupplied force goes home before it does anything else, and
+            // sits in the town until the gaps in it are filled from the town's own people.
+            // How thin a host may run before it goes home is a matter of temperament.
+            const f32 refillBelow = m_profile.refillBelow;
+            const f32 refillUntil = m_profile.refillUntil;
+            const bool refilling = cohort->garrisonOf != kInvalidId && muster < refillUntil;
+            if (cohort->supply < 0.3f || world.CohortStrength(cohortId) < 40 ||
+                muster < refillBelow || refilling)
+            {
+                if (cohort->garrisonOf != kInvalidId) continue;   // already mending; leave it be
+
                 const Settlement* home = world.NearestSettlement(cohort->position, 1e9f, clan.id);
                 if (home && cohort->garrisonOf != home->id)
                 {
@@ -449,6 +621,12 @@ namespace woc
                     continue;
                 }
             }
+
+            // Robbers first. A camp in the realm's own country is a running sore - it robs
+            // the villages, it costs loyalty, and burning it out pays for itself - so it is
+            // dealt with before any quarrel with a neighbour, and by hosts that would
+            // otherwise be standing about at the muster point.
+            if (ClearOutlaws(world, clan, *cohort)) { ++campaigning; continue; }
 
             // Anything past the field quota stays home: that is what keeps the host together.
             if (campaigning >= fieldArmies)
@@ -482,6 +660,66 @@ namespace woc
 
             if (movement.OrderTask(world, cohortId, task, settlement->position, target)) ++campaigning;
         }
+    }
+
+    bool AIPlayer::ClearOutlaws(World& world, const Clan& clan, Cohort& cohort)
+    {
+        ConfigManager& config = ConfigManager::Get();
+        const f32 reach = config.Float("ai/outlawReach", 900.0f);
+        const f32 edge = config.Float("ai/outlawRequiredEdge", 1.15f);
+
+        const f32 power = world.CohortPower(cohort.id);
+        MovementSystem& movement = MovementSystem::Get();
+
+        // The nearest band first: a band in the field is what actually does the robbing,
+        // and it is also the cheaper thing to kill.
+        EntityId bestBand = kInvalidId;
+        f32 bestBandDistance = reach;
+        for (const auto& [id, band] : world.Cohorts())
+        {
+            if (band.clan == cohort.clan || band.IsEmpty()) continue;
+            if (!BanditSystem::Get().IsOutlaw(world, band.clan)) continue;
+
+            const f32 distance = Distance(band.position, cohort.position);
+            if (distance >= bestBandDistance) continue;
+            if (world.CohortPower(id) * edge > power) continue;   // not with this host
+
+            bestBandDistance = distance;
+            bestBand = id;
+        }
+        if (bestBand != kInvalidId)
+        {
+            const Cohort* band = world.FindCohort(bestBand);
+            if (band && movement.OrderTask(world, cohort.id, TaskType::Attack, band->position,
+                                           kInvalidId, bestBand))
+            {
+                return true;
+            }
+        }
+
+        // Then the camp they come out of, which is the only way to be rid of them.
+        EntityId bestCamp = kInvalidId;
+        f32 bestCampDistance = reach;
+        for (const BanditCamp& camp : world.BanditCamps())
+        {
+            const f32 distance = Distance(camp.position, cohort.position);
+            if (distance >= bestCampDistance) continue;
+            if (camp.strength * edge > power * 0.01f) continue;
+
+            bestCampDistance = distance;
+            bestCamp = camp.id;
+        }
+        if (bestCamp != kInvalidId)
+        {
+            const BanditCamp* camp = world.FindBanditCamp(bestCamp);
+            if (camp && movement.OrderTask(world, cohort.id, TaskType::Storm, camp->position, bestCamp))
+            {
+                return true;
+            }
+        }
+
+        (void)clan;
+        return false;
     }
 
     // =========================================================================================
@@ -535,6 +773,7 @@ namespace woc
         {
             if (stateId == m_stateId || other.eliminated) continue;
             if (self->StanceWith(stateId) != DiplomaticStance::Neutral) continue;
+            if (!DiplomacySystem::Get().Known(world, m_stateId, stateId)) continue;
 
             bool adjacent = false;
             for (const auto& [settlementId, settlement] : world.Settlements())

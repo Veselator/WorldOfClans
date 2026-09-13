@@ -9,9 +9,16 @@
 
 #include <exception>
 
+#include <math.h>
+
 int main()
 {
 #ifdef _WIN32
+    // The C runtime picks faster maths routines on processors that have FMA3, and they round
+    // the last bit differently. In a lockstep party two machines with different processors
+    // would then compute different worlds from the same orders; with this they compute the
+    // same one.
+    _set_FMA3_enable(0);
     // The interface is authored in Russian; the console needs to be told.
     SetConsoleOutputCP(CP_UTF8);
 #endif

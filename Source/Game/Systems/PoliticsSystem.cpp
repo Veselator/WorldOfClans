@@ -48,7 +48,7 @@ namespace woc
         std::vector<EntityId> finished;
         for (const auto& [id, state] : world.States())
         {
-            if (state.eliminated) continue;
+            if (state.eliminated || state.outlaw) continue;
 
             bool anyClanLeft = false;
             for (EntityId clanId : state.clans)
@@ -91,7 +91,9 @@ namespace woc
         // Victory: nobody else is left standing.
         for (const auto& [id, state] : world.States())
         {
-            if (id == human->id || state.eliminated) continue;
+            // Robbers are not a rival power; a realm that has outlived every other house
+            // has won whether or not there is still a camp in the woods somewhere.
+            if (id == human->id || state.eliminated || state.outlaw) continue;
 
             bool holdsLand = false;
             for (EntityId clanId : state.clans)

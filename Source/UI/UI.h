@@ -8,6 +8,7 @@
 #include "Theme.h"
 #include "../Core/Singleton.h"
 #include "../Render/RenderTypes.h"
+#include "../Platform/Input.h"
 
 #include <unordered_map>
 
@@ -68,6 +69,41 @@ namespace woc
             return Button(rect, label, !allowed ? ButtonState::Disabled
                                      : (affordable ? ButtonState::Ready : ButtonState::Unaffordable));
         }
+        /// One piece of a price line, in the colour it should be read in. A price is made
+        /// of several of these so that the one resource the treasury is short of can be the
+        /// only red thing on the button - which is the answer to "why can I not build this".
+        struct CostPart
+        {
+            std::string text;
+            Color color;
+        };
+
+        /// A button that says what it costs, because a price belongs on the thing being
+        /// bought and not in a tooltip nobody hovers. `detail` is drawn under the label in
+        /// a smaller, dimmer face - by convention "what it takes | how long it takes".
+        bool CostButton(const Rect& rect, const std::string& label, const std::string& detail,
+                        ButtonState state);
+        /// The same, with the price broken into coloured pieces.
+        bool CostButton(const Rect& rect, const std::string& label,
+                        const std::vector<CostPart>& detail, ButtonState state);
+        bool CostButton(const Rect& rect, const std::string& label,
+                        const std::vector<CostPart>& detail, bool allowed, bool affordable)
+        {
+            return CostButton(rect, label, detail,
+                              !allowed ? ButtonState::Disabled
+                                       : (affordable ? ButtonState::Ready : ButtonState::Unaffordable));
+        }
+        bool CostButton(const Rect& rect, const std::string& label, const std::string& detail,
+                        bool allowed, bool affordable)
+        {
+            return CostButton(rect, label, detail,
+                              !allowed ? ButtonState::Disabled
+                                       : (affordable ? ButtonState::Ready : ButtonState::Unaffordable));
+        }
+        /// A button in a colour of its own, for the one action on a panel that must catch
+        /// the eye - leaving a fight, above all.
+        bool HighlightButton(const Rect& rect, const std::string& label, const Color& tint,
+                             bool enabled = true);
         /// A clickable area with no chrome of its own, for custom-drawn controls.
         bool InvisibleButton(const Rect& rect, const std::string& id, bool enabled = true);
         /// True while the pointer is over `rect` and not hidden by a scroll clip.
@@ -100,6 +136,11 @@ namespace woc
         /// Queues a tooltip for the end of the frame, positioned near the cursor.
         void Tooltip(const std::string& text);
         void TooltipIfHovered(const Rect& rect, const std::string& text);
+        /// The same, with a second block written underneath in its own colour - what a
+        /// building does, say, set apart from what it is.
+        void Tooltip(const std::string& text, const std::string& accent, const Color& accentColor);
+        void TooltipIfHovered(const Rect& rect, const std::string& text,
+                              const std::string& accent, const Color& accentColor);
 
         // --- modality ----------------------------------------------------------------------------
         /// While a modal is up, nothing outside it answers the mouse. The panels behind it
@@ -125,6 +166,11 @@ namespace woc
         static u32 HashId(const std::string& text, const Rect& rect);
         bool IsHovered(const Rect& rect) const;
 
+        /// True on the frame a key is pressed, and again on a steady beat while it is held.
+        bool Repeated(Key key);
+        /// Byte offset of the character boundary nearest the given x inside the field.
+        static size_t CaretFromX(const std::string& value, f32 originX, f32 x);
+
         Vec2 m_mouse;
         std::unordered_map<std::string, f32> m_transitions;
         bool m_mouseDown = false;
@@ -137,6 +183,16 @@ namespace woc
         u32 m_activeId = 0;
         std::string m_activeTextField;
         f32 m_caretTimer = 0.0f;
+        // The caret and the other end of the selection, as byte offsets into the focused
+        // field's text. Only one field can be focused, so one pair serves them all.
+        size_t m_caret = 0;
+        size_t m_anchor = 0;
+        bool m_selecting = false;        // the pointer is dragging out a selection
+        bool m_blurPending = false;      // a click happened; focus is lost unless a field claims it
+        bool m_focusClaimed = false;
+        // Held-key repeat, so an arrow or a backspace held down runs instead of stepping once.
+        i32 m_repeatKey = -1;
+        f32 m_repeatTimer = 0.0f;
 
         Rect m_modal;
         bool m_hasModal = false;
@@ -148,5 +204,7 @@ namespace woc
         std::vector<f32> m_scrollTops;
         std::unordered_map<const f32*, f32> m_scrollExtents;   // stack of active scroll clips
         std::string m_tooltip;
+        std::string m_tooltipAccent;
+        Color m_tooltipAccentColor{ 1.0f, 1.0f, 1.0f, 1.0f };
     };
 }

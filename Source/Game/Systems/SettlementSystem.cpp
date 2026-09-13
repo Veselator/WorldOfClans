@@ -9,6 +9,7 @@
 #include "../../Core/Random.h"
 
 #include <algorithm>
+#include <vector>
 
 namespace woc
 {
@@ -73,6 +74,12 @@ namespace woc
         {
             BuildOption option;
             option.building = &building;
+            if (settlement->UnderConstruction())
+            {
+                option.blockedReason = "Поселення ще будується";
+                options.push_back(option);
+                continue;
+            }
             option.allowed = RequirementsMet(world, *settlement, building, option.blockedReason);
             option.affordable = clan && clan->resources.CanAfford(building.cost);
             if (option.allowed && !option.affordable) option.blockedReason = "Бракує ресурсів";
@@ -104,7 +111,8 @@ namespace woc
             option.cost = stats.recruitCost * evaluator->RecruitCostMultiplier(role.role) *
                           (role.single ? 1.0f : static_cast<f32>(option.headCount) / 50.0f);
 
-            if (!clan) option.blockedReason = "Поселення незалежне";
+            if (settlement->UnderConstruction()) option.blockedReason = "Поселення ще будується";
+            else if (!clan) option.blockedReason = "Поселення незалежне";
             else if (settlement->loyalty < db.MinLoyaltyToRecruit()) option.blockedReason = "Надто низька вірність";
             else if (settlement->population < static_cast<i32>(option.headCount) * 4) option.blockedReason = "Замало людей";
             else if (clan->resources.money < option.cost) option.blockedReason = "Бракує срібла";
@@ -168,33 +176,116 @@ namespace woc
             [role](const RecruitOption& option) { return option.role == role; });
         if (it == options.end() || !it->affordable) return kInvalidId;
 
-        Random& random = GlobalRandom();
-
-        Cohort* cohort = world.FindCohort(cohortId);
-        if (!cohort)
+        // A host that is already full cannot be promised another company.
+        if (const Cohort* cohort = world.FindCohort(cohortId))
         {
-            cohort = &UnitFactory::CreateCohort(world, clan->id, settlement->position, random);
-            cohort->garrisonOf = settlement->id;
-            cohort->currentTask.type = TaskType::Garrison;
-            cohort->currentTask.targetSettlement = settlement->id;
+            size_t promised = cohort->units.size();
+            for (const RecruitOrder& queued : settlement->recruitQueue)
+            {
+                if (queued.cohort == cohortId) ++promised;
+            }
+            if (promised >= UnitDatabase::Get().MaxUnitsPerCohort()) return kInvalidId;
         }
-        if (cohort->units.size() >= UnitDatabase::Get().MaxUnitsPerCohort()) return kInvalidId;
 
+        // Silver and men leave at once - that is what paying for a levy means - but the
+        // company only exists when it has been mustered, and a town musters one at a time.
         clan->resources.money -= it->cost;
         settlement->population = std::max(20, settlement->population - static_cast<i32>(it->headCount));
         settlement->loyalty = std::max(0.0f, settlement->loyalty -
             UnitDatabase::Get().LoyaltyCostPerUnit());
 
-        Unit& unit = UnitFactory::Create(world, cohort->id, settlement->raceId, role,
-                                         it->headCount, settlement->name, random);
+        RecruitOrder order;
+        order.role = role;
+        order.cohort = cohortId;
+        order.headCount = it->headCount;
+        order.hoursTotal = std::max(1.0f, UnitDatabase::Get().Stats(settlement->raceId, role).raiseHours);
+        order.hoursLeft = order.hoursTotal;
+        settlement->recruitQueue.push_back(order);
+        return settlement->id;
+    }
+
+    void SettlementSystem::TickMusters(World& world, f32 days)
+    {
+        for (auto& [id, settlement] : world.Settlements())
+        {
+            if (settlement.UnderConstruction()) continue;
+            MusterRecruits(world, settlement, days);
+        }
+    }
+
+    void SettlementSystem::MusterRecruits(World& world, Settlement& settlement, f32 days)
+    {
+        if (settlement.recruitQueue.empty()) return;
+
+        Clan* clan = world.FindClan(settlement.owner);
+        if (!clan)
+        {
+            // The town changed hands or rose: whatever was being mustered went home.
+            settlement.recruitQueue.clear();
+            return;
+        }
+        if (settlement.besiegedBy != kInvalidId) return;   // nobody drills under a siege
+
+        RecruitOrder& order = settlement.recruitQueue.front();
+        order.hoursLeft -= days * 24.0f;
+        if (order.hoursLeft > 0.0f) return;
+
+        Random& random = GlobalRandom();
+
+        // Into the host it was raised for, if that host is still here to take it; into the
+        // town's own garrison otherwise; into a new garrison if there is none.
+        Cohort* cohort = world.FindCohort(order.cohort);
+        const auto full = [](const Cohort* c) { return c->units.size() >= UnitDatabase::Get().MaxUnitsPerCohort(); };
+        if (cohort && (cohort->clan != clan->id || full(cohort))) cohort = nullptr;
+        if (!cohort)
+        {
+            for (auto& [id, candidate] : world.Cohorts())
+            {
+                if (candidate.garrisonOf == settlement.id && candidate.clan == clan->id && !full(&candidate))
+                {
+                    cohort = &candidate;
+                    break;
+                }
+            }
+        }
+        if (!cohort)
+        {
+            cohort = &UnitFactory::CreateCohort(world, clan->id, settlement.position, random);
+            cohort->garrisonOf = settlement.id;
+            cohort->currentTask.type = TaskType::Garrison;
+            cohort->currentTask.targetSettlement = settlement.id;
+        }
+
+        Unit& unit = UnitFactory::Create(world, cohort->id, settlement.raceId, order.role,
+                                         order.headCount, settlement.name, random);
 
         // Barracks and stables make better soldiers, not just cheaper ones.
-        Scope<ISettlementEvaluator> evaluator = EvaluatorFactory::Build(*settlement, world.Map());
+        Scope<ISettlementEvaluator> evaluator = EvaluatorFactory::Build(settlement, world.Map());
         unit.training = Clamp01(unit.training + evaluator->TrainingBonus());
         unit.morale = Clamp01(unit.morale + evaluator->MoraleBonus());
 
-        world.Log(settlement->name + ": набрано загін (" + unit.DisplayName() + ")", clan->color);
-        return cohort->id;
+        world.Log(settlement.name + ": набрано загін (" + unit.DisplayName() + ")", clan->color);
+        settlement.recruitQueue.erase(settlement.recruitQueue.begin());
+    }
+
+    bool SettlementSystem::CancelRecruit(World& world, EntityId settlementId, size_t index)
+    {
+        Settlement* settlement = world.FindSettlement(settlementId);
+        if (!settlement || index >= settlement->recruitQueue.size()) return false;
+
+        // Men who never marched go home; half the silver is recovered, the rest is spent.
+        const RecruitOrder order = settlement->recruitQueue[index];
+        settlement->population += static_cast<i32>(order.headCount);
+        if (Clan* clan = world.FindClan(settlement->owner))
+        {
+            const std::vector<RecruitOption> options = RecruitOptions(world, settlementId);
+            for (const RecruitOption& option : options)
+            {
+                if (option.role == order.role) { clan->resources.money += option.cost * 0.5f; break; }
+            }
+        }
+        settlement->recruitQueue.erase(settlement->recruitQueue.begin() + static_cast<std::ptrdiff_t>(index));
+        return true;
     }
 
     f32 SettlementSystem::ConversionCost(World& world, EntityId settlementId, const std::string& faithId) const
@@ -301,9 +392,25 @@ namespace woc
         Clan* clan = world.FindClan(clanId);
         if (!clan) return kInvalidId;
 
+        // Every refusal says why. The site ring turns green on ground that may be built on,
+        // but the order can still fall at the treasury or at the cradle, and a founding that
+        // simply does not happen - the name typed, the button pressed, nothing on the map -
+        // is the worst kind of silence.
+        const Clan* human = world.HumanClan();
+        const bool speak = human && human->id == clan->id;
+
         const SettlementKindInfo& info = SettlementDatabase::Get().Kind(kind);
-        if (!clan->resources.CanAfford(info.buildCost)) return kInvalidId;
-        if (!SettlementFactory::CanPlace(world, world.Map(), kind, position, clanId)) return kInvalidId;
+        if (!clan->resources.CanAfford(info.buildCost))
+        {
+            if (speak) world.Log("Скарбниця не потягне закладин", Color::FromRGB(0xD2933A));
+            return kInvalidId;
+        }
+        if (!SettlementFactory::CanPlace(world, world.Map(), kind, position, clanId))
+        {
+            if (speak) world.Log("Тут закладати не можна: чужа земля, вода або надто близько до сусіда",
+                                 Color::FromRGB(0xD2933A));
+            return kInvalidId;
+        }
 
         // Who goes there. The nearest holdings give up the most, and none is stripped below
         // what keeps it alive, so a new city is paid for in people as well as in silver.
@@ -320,6 +427,7 @@ namespace woc
 
         i32 gathered = 0;
         const i32 floor = ConfigManager::Get().Int("population/settlerFloor", 240);
+        std::vector<std::pair<EntityId, i32>> levied;
         for (const auto& [distance, settlementId] : sources)
         {
             if (gathered >= info.settlers) break;
@@ -331,12 +439,19 @@ namespace woc
             if (spare <= 0) continue;
 
             source->population -= spare;
+            levied.emplace_back(settlementId, spare);
             gathered += spare;
         }
 
         if (gathered < info.settlers / 4)
         {
-            world.Log("Нема кого селити: навколо надто мало люду", Color::FromRGB(0xD2933A));
+            // Everyone already mustered goes home. A founding that does not happen must
+            // cost the realm nothing at all, or a player who tries twice is poorer for it.
+            for (const auto& [settlementId, taken] : levied)
+            {
+                if (Settlement* source = world.FindSettlement(settlementId)) source->population += taken;
+            }
+            if (speak) world.Log("Нема кого селити: навколо надто мало люду", Color::FromRGB(0xD2933A));
             return kInvalidId;
         }
 
@@ -353,8 +468,17 @@ namespace woc
         request.name = name;
 
         Settlement& settlement = SettlementFactory::Create(world, request, GlobalRandom());
-        world.Log("Засновано поселення " + settlement.name + " (" + std::to_string(gathered) +
-                  " переселенців)", clan->color);
+
+        // A city is not raised in an afternoon. The settlers are on the ground from the
+        // first day - that is what the marker on the map is - but until the work is done
+        // the place produces nothing and holds no country.
+        settlement.foundingDaysTotal = static_cast<f32>(std::max(1, info.buildDays));
+        settlement.foundingDaysLeft = settlement.foundingDaysTotal;
+        // Founded on one's own ground by definition: CanPlace saw to that.
+        settlement.heldByPresence = false;
+
+        world.Log("Закладено поселення " + settlement.name + " (" + std::to_string(gathered) +
+                  " переселенців, " + std::to_string(info.buildDays) + " дн.)", clan->color);
         CoverageSystem::Get().MarkDirty();
         return settlement.id;
     }
@@ -455,6 +579,22 @@ namespace woc
 
         for (auto& [id, settlement] : world.Settlements())
         {
+            // --- the seat itself, while it is still being raised -------------------------------
+            if (settlement.foundingDaysLeft > 0.0f)
+            {
+                settlement.foundingDaysLeft -= static_cast<f32>(days);
+                if (settlement.foundingDaysLeft <= 0.0f)
+                {
+                    settlement.foundingDaysLeft = 0.0f;
+                    const Clan* founder = world.FindClan(settlement.owner);
+                    world.Log(settlement.name + ": будівництво завершено",
+                              founder ? founder->color : Color::FromRGB(0xC9A227));
+                    CoverageSystem::Get().MarkDirty();
+                }
+                // Nothing else happens on a building site: no improvements, no conversions.
+                continue;
+            }
+
             // --- construction ---------------------------------------------------------------
             for (auto it = settlement.construction.begin(); it != settlement.construction.end();)
             {

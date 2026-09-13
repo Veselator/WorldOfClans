@@ -55,6 +55,11 @@ namespace woc
         if (leader == clan) leader = clans.empty() ? kInvalidId : clans.front();
     }
 
+    bool State::HasMet(EntityId other) const
+    {
+        return other == id || std::find(met.begin(), met.end(), other) != met.end();
+    }
+
     Json State::ToJson() const
     {
         Json node = Json::MakeObject();
@@ -65,6 +70,8 @@ namespace woc
         node["clans"] = EncodeIdList(clans);
         node["leader"] = EncodeId(leader);
         node["playerControlled"] = playerControlled;
+        if (outlaw) node["outlaw"] = true;
+        if (!peerId.empty()) node["peer"] = peerId;
         node["eliminated"] = eliminated;
 
         Json list = Json::MakeArray();
@@ -78,6 +85,7 @@ namespace woc
             list.Push(entry);
         }
         node["relations"] = list;
+        node["met"] = EncodeIdList(met);
         return node;
     }
 
@@ -91,7 +99,10 @@ namespace woc
         state.clans = DecodeIdList(node["clans"]);
         state.leader = DecodeId(node["leader"]);
         state.playerControlled = node["playerControlled"].AsBool(false);
+        state.outlaw = node["outlaw"].AsBool(false);
+        state.peerId = node["peer"].AsString();
         state.eliminated = node["eliminated"].AsBool(false);
+        state.met = DecodeIdList(node["met"]);
 
         for (const Json& entry : node["relations"].AsArray())
         {

@@ -40,8 +40,20 @@ namespace woc
 
         bool playerControlled = false;
         bool eliminated = false;
+        /// Outlaws. They hold no land, project no authority, sit at nobody's table and are
+        /// at war with everybody - including other bands of outlaws. Everything that asks
+        /// "which realms are there" has to skip them, because they are not one.
+        bool outlaw = false;
+        /// In a multiplayer party, which player holds this realm. Empty for the machine's
+        /// own realms and for every realm in a single party. The host checks an incoming
+        /// order against this and against nothing else.
+        std::string peerId;
 
         std::unordered_map<EntityId, Relation> relations;
+        /// Realms this one has laid eyes on - a column of theirs, or one of their towns.
+        /// Under the fog of war nobody treats with a realm it has never seen. Symmetric.
+        std::vector<EntityId> met;
+        bool HasMet(EntityId other) const;
 
         Relation& RelationWith(EntityId other);
         const Relation& RelationWith(EntityId other) const;

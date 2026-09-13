@@ -52,6 +52,10 @@ namespace woc
         bool showFps = false;
 #endif
         bool showBorders = true;
+        /// How the frontier is drawn. Off by default: the map is painted in tiles and the
+        /// hard edge is the honest picture of it. On, the line is smoothed into a drawn
+        /// border - prettier, and a shade dearer to draw.
+        bool smoothBorders = false;
         bool showLabels = true;
         f32 labelMinZoom = 1.3f;
         /// How large the interface is drawn, 1.0 being the size it was designed at. Every
@@ -60,11 +64,21 @@ namespace woc
         f32 uiScale = 1.0f;
 
         // --- sound -------------------------------------------------------------------------
+        f32 masterVolume = 1.0f;
         f32 musicVolume = 0.45f;
         f32 sfxVolume = 0.8f;
 
         // --- game ------------------------------------------------------------------------
         i32 defaultSpeedIndex = 2;
+        /// How often the party writes itself out, in game days. 0 is never. The choices the
+        /// screen offers are a week, a fortnight, a month, half a year and a year, because
+        /// those are the intervals the game's own clock is read in.
+        i32 autosaveDays = 0;
+
+        /// The intervals offered, and their names, kept beside each other so the screen and
+        /// the loader never disagree about what a stored number means.
+        static const std::vector<i32>& AutosaveChoices();
+        static std::string AutosaveLabel(i32 days);
 
         /// Resolutions offered in the settings screen.
         const std::vector<DisplayMode>& Resolutions() const { return m_resolutions; }

@@ -1,4 +1,5 @@
 #include "World.h"
+#include "../Systems/CoverageSystem.h"
 #include "../Players/IPlayer.h"
 #include "../../Core/Config.h"
 #include "../../Core/Log.h"
@@ -9,16 +10,24 @@ namespace woc
 {
     void World::Reset()
     {
-        m_characters.clear();
-        m_units.clear();
-        m_cohorts.clear();
-        m_settlements.clear();
-        m_clans.clear();
-        m_states.clear();
+        // Fresh containers rather than cleared ones. A cleared hash map keeps the buckets
+        // it grew to, and the order it walks its entries in depends on them - so a machine
+        // that had shown a busier map on the title screen would walk its armies in a
+        // different order from one that had not, and a lockstep party would part ways.
+        m_characters = {};
+        m_units = {};
+        m_cohorts = {};
+        m_settlements = {};
+        m_clans = {};
+        m_states = {};
         m_mines.clear();
+        m_banditCamps.clear();
         m_roads.clear();
         m_players.clear();
         m_chronicle.clear();
+        m_flares.clear();
+        m_heralds.clear();
+        m_revoltMarks.clear();
         m_humanState = kInvalidId;
         m_nextId = 1;
 
@@ -241,6 +250,12 @@ namespace woc
         m_heralds.push_back({ headline, detail, color, duration, duration });
     }
 
+    void World::MarkRevolt(const Vec2& position)
+    {
+        const f32 duration = ConfigManager::Get().Float("population/revoltMarkSeconds", 3.2f);
+        m_revoltMarks.push_back({ position, duration, duration });
+    }
+
     void World::Flare(EntityId stateA, EntityId stateB, const Color& color)
     {
         const Settlement* a = CapitalOf(stateA);
@@ -256,7 +271,29 @@ namespace woc
         const Settlement* settlement = FindSettlement(settlementId);
         if (!settlement) return false;
         if (settlement->owner == clanId) return false;
-        if (settlement->owner == kInvalidId) return true;   // nobody's land, nobody's peace
+
+        // Robbers keep no borders and respect none. Anybody's village is theirs to plunder,
+        // and whose country it stands in is not a question they ask.
+        const State* ours = StateOfClan(clanId);
+        if (ours && ours->outlaw) return true;
+
+        if (settlement->owner == kInvalidId)
+        {
+            // An unclaimed or risen holding answers to nobody, but the country around it
+            // answers to somebody. Riding into a neighbour's borders to take a village off
+            // his hands is an act of war whatever the village thinks, so it is allowed only
+            // where the ground is one's own or nobody's.
+            const EntityId ground = CoverageSystem::Get().OwnerAt(*this, settlement->position);
+            if (ground == kInvalidId || ground == clanId) return true;
+
+            const State* ours = StateOfClan(clanId);
+            const State* theirs = StateOfClan(ground);
+            if (ours && theirs && ours->id == theirs->id) return true;
+
+            // ...unless we are already at war with whoever holds the country, in which case
+            // the village is one more thing to be taken from him.
+            return AreHostile(clanId, ground);
+        }
         return AreHostile(clanId, settlement->owner);
     }
 
@@ -269,6 +306,12 @@ namespace woc
         const State* stateB = StateOfClan(clanB);
         if (!stateA || !stateB) return false;
         if (stateA->id == stateB->id) return false;
+
+        // Outlaws have no diplomacy to be at war through: they are simply everybody's
+        // enemy, and each other's - two bands that meet in the same forest are competitors
+        // long before they are colleagues.
+        if (stateA->outlaw || stateB->outlaw) return true;
+
         return stateA->IsAtWarWith(stateB->id);
     }
 
@@ -296,6 +339,39 @@ namespace woc
             if (const Unit* unit = FindUnit(unitId)) total += unit->CombatPower(cohort->experience);
         }
         return total;
+    }
+
+    BanditCamp& World::CreateBanditCamp()
+    {
+        BanditCamp camp;
+        camp.id = NextId();
+        m_banditCamps.push_back(camp);
+        return m_banditCamps.back();
+    }
+
+    BanditCamp* World::FindBanditCamp(EntityId id)
+    {
+        for (BanditCamp& camp : m_banditCamps)
+        {
+            if (camp.id == id) return &camp;
+        }
+        return nullptr;
+    }
+
+    const BanditCamp* World::FindBanditCamp(EntityId id) const
+    {
+        for (const BanditCamp& camp : m_banditCamps)
+        {
+            if (camp.id == id) return &camp;
+        }
+        return nullptr;
+    }
+
+    void World::DestroyBanditCamp(EntityId id)
+    {
+        m_banditCamps.erase(std::remove_if(m_banditCamps.begin(), m_banditCamps.end(),
+                                           [id](const BanditCamp& camp) { return camp.id == id; }),
+                            m_banditCamps.end());
     }
 
     Settlement* World::NearestSettlement(const Vec2& position, f32 maxDistance, EntityId ownerFilter)
@@ -370,36 +446,100 @@ namespace woc
 
     // --- persistence -------------------------------------------------------------------------------------
 
-    Json World::SaveObjects() const
+    void World::AdoptObjects(const Json& node, const std::string& localPeer)
+    {
+        // Everything that lives in the world goes; the map, the players and the chronicle
+        // stay, because they are this machine's and not the host's.
+        const EntityId ownRealm = m_humanState;
+
+        // The people in the ranks are most of a snapshot's weight and change slowly, so
+        // the host sends them only now and then; between those the ones we have stand.
+        const bool withPeople = node.Has("characters");
+        // Fresh containers, for the same reason as in Reset: equal worlds must also be laid
+        // out equally in memory, or they are walked in different orders.
+        if (withPeople) m_characters = {};
+        m_units = {};
+        m_cohorts = {};
+        m_settlements = {};
+        m_clans = {};
+        m_states = {};
+        m_mines.clear();
+        m_roads.clear();
+        // Camps were never cleared here, so every snapshot added the whole list again and a
+        // guest's world filled up with thousands of copies of the same tents.
+        m_banditCamps.clear();
+
+        LoadObjects(node, true);
+
+        // The host's calendar. The guest's own clock runs between snapshots for the sake
+        // of a smooth picture and is pulled back into line here whenever it has drifted.
+        const i32 hostDay = node["day"].AsInt(m_time.TotalDays());
+        if (hostDay != m_time.TotalDays()) m_time.SetTotalDays(hostDay);
+
+        // The snapshot names the host's realm as "the human one". This machine plays its
+        // own: the realm whose seat carries this player's id.
+        m_humanState = ownRealm;
+        if (!localPeer.empty())
+        {
+            for (const auto& [id, state] : m_states)
+            {
+                if (state.peerId == localPeer) { m_humanState = id; break; }
+            }
+        }
+    }
+
+    namespace
+    {
+        /// Entities are written in id order, so the same world always gives the same text -
+        /// whatever order its containers happen to hold them in.
+        template <typename Map>
+        std::vector<EntityId> SortedIds(const Map& map)
+        {
+            std::vector<EntityId> ids;
+            ids.reserve(map.size());
+            for (const auto& entry : map) ids.push_back(entry.first);
+            std::sort(ids.begin(), ids.end());
+            return ids;
+        }
+    }
+
+    Json World::SaveObjects(bool includeLayers, bool includeCharacters) const
     {
         Json root = Json::MakeObject();
         root["seed"] = static_cast<i64>(m_seed);
         root["day"] = m_time.TotalDays();
         root["humanState"] = EncodeId(m_humanState);
+        // The next id to hand out. Not "the highest id plus one": ids of the fallen are never
+        // reused, so after a war the counter stands well above anybody still alive, and a
+        // world that forgot that would name its next recruits differently.
+        root["nextId"] = static_cast<i64>(m_nextId);
 
         Json states = Json::MakeArray();
-        for (const auto& [id, state] : m_states) states.Push(state.ToJson());
+        for (EntityId id : SortedIds(m_states)) states.Push(m_states.at(id).ToJson());
         root["states"] = states;
 
         Json clans = Json::MakeArray();
-        for (const auto& [id, clan] : m_clans) clans.Push(clan.ToJson());
+        for (EntityId id : SortedIds(m_clans)) clans.Push(m_clans.at(id).ToJson());
         root["clans"] = clans;
 
         Json settlements = Json::MakeArray();
-        for (const auto& [id, settlement] : m_settlements) settlements.Push(settlement.ToJson());
+        for (EntityId id : SortedIds(m_settlements)) settlements.Push(m_settlements.at(id).ToJson());
         root["settlements"] = settlements;
 
         Json cohorts = Json::MakeArray();
-        for (const auto& [id, cohort] : m_cohorts) cohorts.Push(cohort.ToJson());
+        for (EntityId id : SortedIds(m_cohorts)) cohorts.Push(m_cohorts.at(id).ToJson());
         root["cohorts"] = cohorts;
 
         Json units = Json::MakeArray();
-        for (const auto& [id, unit] : m_units) units.Push(unit.ToJson());
+        for (EntityId id : SortedIds(m_units)) units.Push(m_units.at(id).ToJson());
         root["units"] = units;
 
-        Json characters = Json::MakeArray();
-        for (const auto& [id, character] : m_characters) characters.Push(character.ToJson());
-        root["characters"] = characters;
+        if (includeCharacters)
+        {
+            Json characters = Json::MakeArray();
+            for (EntityId id : SortedIds(m_characters)) characters.Push(m_characters.at(id).ToJson());
+            root["characters"] = characters;
+        }
 
         Json mines = Json::MakeArray();
         for (const MineSite& mine : m_mines)
@@ -417,6 +557,23 @@ namespace woc
             mines.Push(node);
         }
         root["mines"] = mines;
+
+        Json camps = Json::MakeArray();
+        for (const BanditCamp& camp : m_banditCamps)
+        {
+            Json node = Json::MakeObject();
+            node["id"] = EncodeId(camp.id);
+            node["clan"] = EncodeId(camp.clan);
+            node["x"] = camp.position.x;
+            node["y"] = camp.position.y;
+            node["race"] = camp.raceId;
+            node["hoard"] = camp.hoard.ToJson();
+            node["strength"] = camp.strength;
+            node["damage"] = camp.damage;
+            node["muster"] = camp.musterDays;
+            camps.Push(node);
+        }
+        root["banditCamps"] = camps;
 
         Json roads = Json::MakeArray();
         for (const RoadSegment& road : m_roads)
@@ -438,6 +595,8 @@ namespace woc
 
         // Forest and field coverage are grid layers, stored run-length encoded to keep
         // MapObjects.json readable rather than exploding into a million numbers.
+        if (!includeLayers) return root;
+
         auto encodeLayer = [this](bool forest)
         {
             Json runs = Json::MakeArray();
@@ -537,6 +696,20 @@ namespace woc
             track(mine.id);
             m_mines.push_back(mine);
         }
+        for (const Json& entry : node["banditCamps"].AsArray())
+        {
+            BanditCamp camp;
+            camp.id = DecodeId(entry["id"]);
+            camp.clan = DecodeId(entry["clan"]);
+            camp.position = { entry["x"].AsFloat(), entry["y"].AsFloat() };
+            camp.raceId = entry["race"].AsString("human");
+            camp.hoard = ResourceData::FromJson(entry["hoard"]);
+            camp.strength = entry["strength"].AsFloat(1.0f);
+            camp.damage = entry["damage"].AsFloat(0.0f);
+            camp.musterDays = entry["muster"].AsFloat(0.0f);
+            track(camp.id);
+            m_banditCamps.push_back(camp);
+        }
         for (const Json& entry : node["roads"].AsArray())
         {
             RoadSegment road;
@@ -568,6 +741,7 @@ namespace woc
         decodeLayer(node["forestRuns"], true);
         decodeLayer(node["fieldRuns"], false);
 
-        m_nextId = highest + 1;
+        for (const auto& [id, character] : m_characters) track(id);
+        m_nextId = std::max<EntityId>(highest + 1, static_cast<EntityId>(node["nextId"].AsNumber(0.0)));
     }
 }

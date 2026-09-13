@@ -43,6 +43,31 @@ namespace woc
         }
     };
 
+    /// A robbers' camp: a few tents in country nobody rides through, and whatever they
+    /// have taken buried under the floor of one of them.
+    ///
+    /// It is deliberately not a settlement. It holds no land, produces nothing, cannot be
+    /// captured and does not appear in anybody's realm - the only things that can happen to
+    /// it are that it sends out another band, or that somebody burns it down.
+    struct BanditCamp
+    {
+        EntityId id = kInvalidId;
+        EntityId clan = kInvalidId;      // which band of outlaws keeps it
+        Vec2 position;
+        std::string raceId = "human";
+
+        /// What is buried under the floor. It grows as the bands bring plunder home, and
+        /// whoever burns the camp carries it off.
+        ResourceData hoard;
+        /// How hard the camp is to storm, and how much of that is left after an assault.
+        f32 strength = 1.0f;
+        f32 damage = 0.0f;
+        /// Days until another band walks out of it.
+        f32 musterDays = 0.0f;
+
+        f32 Health() const { return strength > 0.0f ? Clamp01(1.0f - damage / strength) : 0.0f; }
+    };
+
     struct RoadSegment
     {
         std::vector<Vec2> points;
@@ -67,6 +92,15 @@ namespace woc
         std::string headline;
         std::string detail;
         Color color{ 1.0f, 1.0f, 1.0f, 1.0f };
+        f32 life = 0.0f;        // seconds of real time left
+        f32 duration = 1.0f;
+    };
+
+    /// A rising, thrown up over the village that rose: a fist that swells out of nothing,
+    /// overshoots, and settles. Purely a signal to the player.
+    struct RevoltMark
+    {
+        Vec2 position;
         f32 life = 0.0f;        // seconds of real time left
         f32 duration = 1.0f;
     };
@@ -102,6 +136,7 @@ namespace woc
         Clan& CreateClan();
         State& CreateState();
         MineSite& CreateMine();
+        BanditCamp& CreateBanditCamp();
 
         // --- lookup ----------------------------------------------------------------------------
         Character* FindCharacter(EntityId id);
@@ -112,6 +147,9 @@ namespace woc
         State* FindState(EntityId id);
         MineSite* FindMine(EntityId id);
         const MineSite* FindMine(EntityId id) const;
+        BanditCamp* FindBanditCamp(EntityId id);
+        const BanditCamp* FindBanditCamp(EntityId id) const;
+        void DestroyBanditCamp(EntityId id);
 
         const Character* FindCharacter(EntityId id) const;
         const Unit* FindUnit(EntityId id) const;
@@ -127,6 +165,7 @@ namespace woc
         std::unordered_map<EntityId, Clan>& Clans() { return m_clans; }
         std::unordered_map<EntityId, State>& States() { return m_states; }
         std::vector<MineSite>& Mines() { return m_mines; }
+        std::vector<BanditCamp>& BanditCamps() { return m_banditCamps; }
         std::vector<RoadSegment>& Roads() { return m_roads; }
 
         const std::unordered_map<EntityId, Settlement>& Settlements() const { return m_settlements; }
@@ -134,6 +173,7 @@ namespace woc
         const std::unordered_map<EntityId, Clan>& Clans() const { return m_clans; }
         const std::unordered_map<EntityId, State>& States() const { return m_states; }
         const std::vector<MineSite>& Mines() const { return m_mines; }
+        const std::vector<BanditCamp>& BanditCamps() const { return m_banditCamps; }
         const std::vector<RoadSegment>& Roads() const { return m_roads; }
 
         // --- destruction -------------------------------------------------------------------------
@@ -163,6 +203,7 @@ namespace woc
         // --- the player seats ---------------------------------------------------------------------------
         void AddPlayer(Scope<IPlayer> player);
         const std::vector<Scope<IPlayer>>& Players() const { return m_players; }
+        void ClearPlayers() { m_players.clear(); }
         IPlayer* PlayerForState(EntityId stateId);
         EntityId HumanStateId() const { return m_humanState; }
         void SetHumanState(EntityId stateId) { m_humanState = stateId; }
@@ -180,13 +221,25 @@ namespace woc
         const std::vector<Herald>& Heralds() const { return m_heralds; }
         std::vector<DiplomaticFlare>& Flares() { return m_flares; }
         const std::vector<DiplomaticFlare>& Flares() const { return m_flares; }
+        /// Throws a fist up over this spot for a few seconds.
+        void MarkRevolt(const Vec2& position);
+        std::vector<RevoltMark>& RevoltMarks() { return m_revoltMarks; }
         /// The seat of a realm: its leading house's greatest city, or any holding it has.
         const Settlement* CapitalOf(EntityId stateId) const;
 
         const std::vector<Chronicle>& ChronicleEntries() const { return m_chronicle; }
 
         // --- persistence ---------------------------------------------------------------------------------
-        Json SaveObjects() const;
+        /// The whole world as a document. `includeLayers` carries the forest and field
+        /// grids with it; a save wants them and a multiplayer snapshot usually does not,
+        /// because they are by far the largest part of it and they change once a month.
+        Json SaveObjects(bool includeLayers = true, bool includeCharacters = true) const;
+        /// Replaces everything this world holds with what the document says. Used by a
+        /// client receiving the host's snapshot: entities that have died on the host must
+        /// go, and LoadObjects on its own only ever adds.
+        /// `localPeer` is this machine's player: the realm that carries his id is the one
+        /// this machine plays, whatever realm the host was playing when he wrote the snapshot.
+        void AdoptObjects(const Json& node, const std::string& localPeer = std::string());
         /// Restores a saved world. With `includeRealms` false only the map's furniture is
         /// read - roads, mines and the forest and field layers - so a new party can seed
         /// its own realms onto an authored landscape.
@@ -212,8 +265,10 @@ namespace woc
         std::unordered_map<EntityId, Clan> m_clans;
         std::unordered_map<EntityId, State> m_states;
         std::vector<MineSite> m_mines;
+        std::vector<BanditCamp> m_banditCamps;
         std::vector<RoadSegment> m_roads;
         std::vector<DiplomaticFlare> m_flares;
+        std::vector<RevoltMark> m_revoltMarks;
         std::vector<Herald> m_heralds;
 
         std::vector<Scope<IPlayer>> m_players;

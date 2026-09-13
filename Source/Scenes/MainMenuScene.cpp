@@ -6,6 +6,7 @@
 #include "../Core/Random.h"
 #include "../Game/Map/MapLoader.h"
 #include "../Game/WorldGenerator.h"
+#include "../Net/NetSession.h"
 #include "../Render/Renderer.h"
 #include "../UI/UI.h"
 
@@ -90,6 +91,21 @@ namespace woc
     {
         m_time += deltaTime;
         UpdateBackdropCamera(deltaTime);
+        m_settings.Update(deltaTime);
+        m_lobby.Update(deltaTime);
+
+        // The host has started the party: everybody at the table loads the same world and
+        // takes the seat the lobby gave them.
+        PartySettings party;
+        std::string saveFile;
+        if (NetSession::Get().ConsumeStart(party, saveFile))
+        {
+            SceneManager& scenes = SceneManager::Get();
+            scenes.SetPayload("map", party.mapFolder);
+            scenes.SetPayload("load", saveFile);
+            scenes.SetData("party", party.ToJson());
+            scenes.Request(SceneId::Game);
+        }
     }
 
     void MainMenuScene::Render()
@@ -97,6 +113,8 @@ namespace woc
         DrawBackdrop();
         DrawMenu();
         DrawLoadDialog();
+        m_settings.Draw();
+        m_lobby.Draw();
     }
 
     void MainMenuScene::DrawBackdrop()
@@ -134,7 +152,7 @@ namespace woc
         const Vec2 viewport = renderer.ViewportSize();
 
         const f32 panelWidth = 460.0f;
-        const f32 panelHeight = 424.0f;
+        const f32 panelHeight = 468.0f;
         const f32 rise = ui.SlideIn("menu.panel", true, 40.0f, 0.35f);
 
         const Rect panel{ (viewport.x - panelWidth) * 0.5f,
@@ -158,12 +176,13 @@ namespace woc
             const std::string label = menu["items"][index].AsString(fallback);
             const Rect rect{ x, y, buttonWidth, 34.0f };
             y += 44.0f;
-            return ui.Button(rect, label, !m_loadOpen);
+            return ui.Button(rect, label, !m_loadOpen && !m_settings.IsOpen() && !m_lobby.IsOpen());
         };
 
         if (item(0, "Нова партія")) SceneManager::Get().Request(SceneId::PartySetup);
+        if (item(1, "Мультиплеєрна гра")) m_lobby.Open();
 
-        if (item(1, "Завантажити гру"))
+        if (item(2, "Завантажити гру"))
         {
             m_saves = SaveGame::List();
             m_selectedSave = m_saves.empty() ? -1 : 0;
@@ -171,9 +190,9 @@ namespace woc
             ui.RestartTransition("menu.load");
         }
 
-        if (item(2, "Редактор карт")) SceneManager::Get().Request(SceneId::Editor);
-        if (item(3, "Налаштування")) SceneManager::Get().Request(SceneId::Settings);
-        if (item(4, "Вихід")) SceneManager::Get().RequestQuit();
+        if (item(3, "Редактор карт")) SceneManager::Get().Request(SceneId::Editor);
+        if (item(4, "Налаштування")) m_settings.Open();
+        if (item(5, "Вихід")) SceneManager::Get().RequestQuit();
 
         const Rect footer{ panel.x, panel.Bottom() - 26.0f, panel.w, 20.0f };
         renderer.UITextCentered("Vulkan  |  " + m_version, footer, theme.textDim);
@@ -212,6 +231,13 @@ namespace woc
             for (size_t i = 0; i < m_saves.size(); ++i)
             {
                 const Rect row{ content.x, content.y + i * rowHeight, content.w, rowHeight - 4.0f };
+
+                // A save names the map it was played on, and that map can have been renamed
+                // or thrown away since. Saying so here is a good deal kinder than loading it
+                // and dropping the player back at the menu with nothing but a log line.
+                MapDescription probe;
+                const bool playable = MapLoader::ReadDescription(m_saves[i].mapFolder, probe);
+
                 if (ui.ListItem(row, m_saves[i].name, static_cast<i32>(i) == m_selectedSave))
                 {
                     m_selectedSave = static_cast<i32>(i);
@@ -219,7 +245,15 @@ namespace woc
                 ui.LabelRight({ row.x, row.y, row.w - theme.padding, 20.0f },
                               m_saves[i].dateText, theme.textDim);
                 ui.LabelRight({ row.x, row.y + 20.0f, row.w - theme.padding, 20.0f },
-                              m_saves[i].realmName, theme.textDim);
+                              playable ? m_saves[i].realmName
+                                       : "карти «" + m_saves[i].mapFolder + "» немає",
+                              playable ? theme.textDim : theme.negative);
+                if (!playable)
+                {
+                    ui.TooltipIfHovered(row,
+                        "Карту, на якій грали, не знайдено в теці Maps.\n"
+                        "Поверніть її на місце — і збереження відкриється.");
+                }
             }
             ui.EndScroll();
         }
@@ -234,6 +268,12 @@ namespace woc
 
         const bool hasSelection = m_selectedSave >= 0 && m_selectedSave < static_cast<i32>(m_saves.size());
 
+        // Loading a save whose map is gone can only end one way, so the button does not
+        // offer to try.
+        MapDescription probe;
+        const bool loadable = hasSelection &&
+            MapLoader::ReadDescription(m_saves[static_cast<size_t>(m_selectedSave)].mapFolder, probe);
+
         if (ui.Button({ panel.x + theme.padding * 2.0f + buttonWidth, buttonY, buttonWidth, 32.0f },
                       "Видалити", hasSelection))
         {
@@ -243,7 +283,7 @@ namespace woc
         }
 
         if (ui.Button({ panel.x + theme.padding * 3.0f + buttonWidth * 2.0f, buttonY, buttonWidth, 32.0f },
-                      "Завантажити", hasSelection))
+                      "Завантажити", loadable))
         {
             const SaveSlot& slot = m_saves[static_cast<size_t>(m_selectedSave)];
             SceneManager& scenes = SceneManager::Get();

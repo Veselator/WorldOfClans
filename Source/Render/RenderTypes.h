@@ -28,6 +28,14 @@ namespace woc
         VillageGreat,
         CityLarge,
         CityGreat,
+        /// A raised fist. Thrown up over a village that has just risen against its lord.
+        Revolt,
+        /// A stretch of crenellated wall, laid over a town that has built one.
+        Walls,
+        /// Three tents in the woods: an outlaw camp.
+        BanditCamp,
+        /// The mark a band of outlaws carries instead of a banner.
+        BanditBand,
         Count
     };
 
@@ -45,7 +53,8 @@ namespace woc
         Vec2 size;
         Vec4 uvRect;
         Color color;
-        Vec4 params;   // x = vertical anchor (0 = stands on the point), y = depth bias, z = flash
+        Vec4 params;   // x = vertical anchor (0 = stands on the point), y = depth bias, z = flash,
+                       // w = sideways offset on screen, in world units
     };
 
     struct UIVertex

@@ -12,6 +12,7 @@
 
 #include "../../Core/Math.h"
 #include "../../Core/Singleton.h"
+#include "../../Core/Json.h"
 #include "../Map/MapData.h"
 #include "../../Render/RenderTypes.h"
 #include "../World/ResourceData.h"
@@ -66,6 +67,9 @@ namespace woc
         /// Rebuilds the road geometry and hands it to the renderer. Cheap when unchanged.
         void UploadLayer(World& world);
         void MarkDirty() { m_dirty = true; }
+        /// The roadworks under way, tile by tile, for saves and resynchronisation.
+        Json ToJson() const;
+        void FromJson(const Json& node);
         /// Forgets every project and cached layer. A new party inherits no roadworks.
         void Reset();
 
@@ -82,6 +86,10 @@ namespace woc
 
         /// Effort of laying road across a tile: slope and forest cost work, water costs a bridge.
         static f32 BuildCost(const MapData& map, const Coord& tile);
+        /// What a metre of road across this tile actually costs in labour and materials,
+        /// relative to a metre across level open ground. A track already there is nearly
+        /// free to widen; a hillside is dear and a highland dearer.
+        static f32 GroundEffort(const MapData& map, const Coord& tile);
         void Stamp(World& world, const Coord& tile);
 
         /// Rasterises every stretch of road into a full-resolution layer.

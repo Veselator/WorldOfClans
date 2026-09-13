@@ -3,16 +3,20 @@
 // Split out of GameScene.cpp so the scene file stays about the world and this one stays
 // about presenting it. All of it is immediate-mode: what you see is what this frame drew.
 #include "GameScene.h"
+#include "../Net/NetSession.h"
 #include "SceneManager.h"
 
 #include "../Core/Config.h"
 #include "../Core/Log.h"
 #include "../Game/Factories/EvaluatorFactory.h"
+#include "../Game/GameCommands.h"
+#include "../Game/Systems/BanditSystem.h"
 #include "../Game/Systems/BattleSystem.h"
 #include "../Game/Systems/CoverageSystem.h"
 #include "../Game/Systems/DiplomacySystem.h"
 #include "../Game/Systems/DynastySystem.h"
 #include "../Game/Systems/EconomySystem.h"
+#include "../Game/Systems/ForestrySystem.h"
 #include "../Game/Systems/MarketSystem.h"
 #include "../Game/Systems/MovementSystem.h"
 #include "../Game/Systems/PopulationSystem.h"
@@ -27,6 +31,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 
 namespace woc
 {
@@ -51,6 +56,150 @@ namespace woc
             if (value01 > 0.66f) return theme.positive;
             if (value01 > 0.33f) return theme.warning;
             return theme.negative;
+        }
+
+        std::string Round(f32 value)
+        {
+            char buffer[24];
+            std::snprintf(buffer, sizeof(buffer), "%.0f", value);
+            return buffer;
+        }
+
+        /// What a purse hands over, in the shortest honest form: "150 ср, 60 дер, 40 їжі".
+        /// Whatever the order does not cost is simply not mentioned.
+        std::string CostText(const ResourceData& cost)
+        {
+            std::string text;
+            auto add = [&](f32 amount, const char* unit)
+            {
+                if (amount < 0.5f) return;
+                if (!text.empty()) text += ", ";
+                text += Round(amount) + " " + unit;
+            };
+            add(cost.money, "ср");
+            add(cost.wood, "дер");
+            add(cost.stone, "кам");
+            add(cost.food, "їжі");
+            return text.empty() ? "безкоштовно" : text;
+        }
+
+        /// The line that goes under a button: what it takes, then how long it takes.
+        /// "150 ср, 60 дер | 60 дн." - one glance answers both questions a player has
+        /// about anything he is about to order.
+        std::string CostLine(const ResourceData& cost, i32 days)
+        {
+            const std::string when = days > 0 ? std::to_string(days) + " дн." : "миттєво";
+            return CostText(cost) + "  |  " + when;
+        }
+
+        /// The same line, in pieces, each coloured by whether the treasury can actually
+        /// meet it. A red button says "you cannot afford this"; a red *word* says which of
+        /// the four things you are short of, which is the question the player is asking.
+        std::vector<UI::CostPart> CostParts(const ResourceData& cost, const ResourceData& purse,
+                                            i32 days, const Theme& theme, const char* unit = "дн.")
+        {
+            std::vector<UI::CostPart> parts;
+            bool any = false;
+
+            auto add = [&](f32 amount, f32 held, const char* unit)
+            {
+                if (amount < 0.5f) return;
+                if (any) parts.push_back({ ", ", theme.textDim });
+                parts.push_back({ Round(amount) + " " + unit,
+                                  held >= amount ? theme.positive : theme.negative });
+                any = true;
+            };
+            add(cost.money, purse.money, "ср");
+            add(cost.wood, purse.wood, "дер");
+            add(cost.stone, purse.stone, "кам");
+            add(cost.food, purse.food, "їжі");
+
+            if (!any) parts.push_back({ "безкоштовно", theme.positive });
+
+            parts.push_back({ "  |  ", theme.textDim });
+            parts.push_back({ days > 0 ? std::to_string(days) + " " + unit : std::string("миттєво"),
+                              theme.textDim });
+            return parts;
+        }
+
+        /// A figure for a tooltip: whole when it is whole, one decimal when it is not.
+        std::string Num(f32 value)
+        {
+            char buffer[32];
+            if (std::abs(value - std::round(value)) < 0.05f) std::snprintf(buffer, sizeof(buffer), "%.0f", value);
+            else std::snprintf(buffer, sizeof(buffer), "%.1f", value);
+            return buffer;
+        }
+
+        const char* ResourceUnit(ResourceType type)
+        {
+            switch (type)
+            {
+            case ResourceType::Money: return "срібла";
+            case ResourceType::Wood:  return "дерева";
+            case ResourceType::Stone: return "каменю";
+            case ResourceType::Food:  return "їжі";
+            default:                  return "";
+            }
+        }
+
+        /// "x1.25" as "+25 %", "x0.8" as "-20 %".
+        std::string PercentChange(f32 multiplier)
+        {
+            const i32 percent = static_cast<i32>(std::lround((multiplier - 1.0f) * 100.0f));
+            return (percent >= 0 ? "+" : "") + std::to_string(percent) + " %";
+        }
+
+        /// What a building actually does, one effect per line, read straight off its data so
+        /// the tooltip can never promise something the decorator does not deliver.
+        std::string DescribeBuildingEffect(const BuildingInfo& b)
+        {
+            std::string out;
+            auto line = [&](const std::string& text) { if (!out.empty()) out += "\n"; out += text; };
+
+            if (b.decorator == DecoratorKind::Production)
+            {
+                const std::string unit = ResourceUnit(b.resource);
+                if (std::abs(b.multiplier - 1.0f) > 0.001f)
+                    line("Видобуток " + unit + ": " + PercentChange(b.multiplier));
+                if (b.flat > 0.001f)
+                    line("+" + Num(b.flat) + " " + unit + " на місяць");
+            }
+            if (std::abs(b.defenseMultiplier - 1.0f) > 0.001f) line("Оборона: " + PercentChange(b.defenseMultiplier));
+            if (b.trainingBonus > 0.001f) line("Вишкіл: +" + std::to_string(static_cast<i32>(std::lround(b.trainingBonus * 100.0f))) + " %");
+            if (std::abs(b.recruitCostMultiplier - 1.0f) > 0.001f) line("Ціна набору: " + PercentChange(b.recruitCostMultiplier));
+            if (std::abs(b.cavalryCostMultiplier - 1.0f) > 0.001f) line("Ціна кінноти: " + PercentChange(b.cavalryCostMultiplier));
+            if (b.moraleBonus > 0.001f) line("Бойовий дух: +" + std::to_string(static_cast<i32>(std::lround(b.moraleBonus * 100.0f))) + " %");
+            if (std::abs(b.loyaltyPerMonth) > 0.0001f)
+                line(std::string("Вірність: ") + (b.loyaltyPerMonth > 0.0f ? "+" : "") +
+                     Num(b.loyaltyPerMonth * 100.0f) + " % на місяць");
+            if (std::abs(b.conversionCostMultiplier - 1.0f) > 0.001f) line("Ціна навернення: " + PercentChange(b.conversionCostMultiplier));
+            if (std::abs(b.distancePenaltyMultiplier - 1.0f) > 0.001f) line("Вплив відстані на вірність: " + PercentChange(b.distancePenaltyMultiplier));
+            if (std::abs(b.coverageMultiplier - 1.0f) > 0.001f) line("Покриття: " + PercentChange(b.coverageMultiplier));
+            if (b.caravanBonus > 0.001f) line("Торгівля: +" + std::to_string(static_cast<i32>(std::lround(b.caravanBonus * 100.0f))) + " % срібла (повністю — лише при дорозі)");
+            if (b.forestHarvest > 0.001f) line("Вирубує " + Num(b.forestHarvest) + " лісу на місяць");
+            if (b.fieldRadiusBonus > 0.001f) line("Поля розходяться далі: +" + Num(b.fieldRadiusBonus));
+            if (b.siegeSupplyDays > 0.001f) line("Запаси на облогу: +" + Num(b.siegeSupplyDays) + " дн.");
+            if (b.bridgesWater) line("Прокладає мости через воду поблизу");
+            return out;
+        }
+
+        /// Monthly output a standing building is responsible for, as "+3.5 дер, +1 їжі".
+        /// Empty when it brings in nothing, which is what the list shows for walls.
+        std::string ContributionText(const ResourceData& gain)
+        {
+            std::string out;
+            auto add = [&](f32 amount, const char* unit)
+            {
+                if (amount < 0.05f) return;
+                if (!out.empty()) out += ", ";
+                out += "+" + Num(amount) + " " + unit;
+            };
+            add(gain.money, "ср");
+            add(gain.wood, "дер");
+            add(gain.stone, "кам");
+            add(gain.food, "їжі");
+            return out;
         }
     }
 
@@ -143,7 +292,8 @@ namespace woc
             m_renderer.UIRect(button, active ? m_theme.accent.WithAlpha(0.35f) : m_theme.panel);
             m_renderer.UIRectOutline(button, active ? m_theme.accent : m_theme.border, 1.0f);
             m_renderer.UITextCentered(label, button, active ? m_theme.textStrong : m_theme.textDim);
-            if (m_ui.InvisibleButton(button, "speed" + label)) simulation.SetSpeedIndex(static_cast<i32>(i));
+            if (m_ui.InvisibleButton(button, "speed" + label) && NetSession::Get().MayControlSpeed())
+                simulation.SetSpeedIndex(static_cast<i32>(i));
             speedX += speedWidth;
         }
     }
@@ -339,6 +489,17 @@ namespace woc
             m_selectionKind = SelectionKind::None;
             m_selected = kInvalidId;
         }
+        else if (m_selectionKind == SelectionKind::BanditCamp)
+        {
+            if (BanditCamp* camp = m_world.FindBanditCamp(m_selected))
+            {
+                DrawBanditCampPanel(body, *camp);
+                return;
+            }
+            // Burnt out while the panel was open.
+            m_selectionKind = SelectionKind::None;
+            m_selected = kInvalidId;
+        }
 
         DrawConstructionPanel(body);
     }
@@ -350,23 +511,28 @@ namespace woc
     void GameScene::DrawConstructionPanel(const Rect& area)
     {
         const Rect view = area.Inset(m_theme.padding);
-        f32 y = view.y;
+
+        // The list of what is under way can run past the bottom of the panel on a busy
+        // realm, so the whole thing scrolls.
+        const Rect content = m_ui.BeginScroll(view, view.h, m_sidePanelScroll);
+        f32 y = content.y;
+
         auto row = [&](f32 height)
         {
-            const Rect r{ view.x, y, view.w, height };
+            const Rect r{ content.x, y, content.w, height };
             y += height + 4.0f;
             return r;
         };
 
         m_ui.LabelCentered(row(22.0f), "Нічого не вибрано", m_theme.textDim);
-        m_ui.LabelCentered(row(20.0f), "ЛКМ — вибрати, ПКМ — наказ", m_theme.textDim);
+        m_ui.LabelCentered(row(20.0f), "ЛКМ — вибрати, рамка — виділити", m_theme.textDim);
 
         Clan* clan = m_world.HumanClan();
-        if (!clan) return;
+        if (!clan) { m_ui.EndScroll(y); return; }
 
         y += 10.0f;
         m_ui.Label(row(20.0f), "БУДІВНИЦТВО", m_theme.accent);
-        y += m_ui.Paragraph({ view.x, y, view.w, 0.0f },
+        y += m_ui.Paragraph({ content.x, y, content.w, 0.0f },
                             "Тут зводять те, що стоїть на самій карті. Усе інше — казарми, "
                             "поля, стіни — це покращення поселень, і робиться в їхніх панелях.",
                             m_theme.textDim) + 10.0f;
@@ -376,6 +542,16 @@ namespace woc
             const SettlementKindInfo& info = SettlementDatabase::Get().Kind(m_placingKind);
             m_ui.Label(row(22.0f), "Оберіть місце: " + info.name, m_theme.warning);
             if (m_ui.Button(row(26.0f), "Скасувати")) m_placingSettlement = false;
+            m_ui.EndScroll(y);
+            return;
+        }
+
+        if (m_placingForest)
+        {
+            m_ui.Label(row(22.0f), "Оберіть, де саджати ліс", m_theme.warning);
+            m_ui.Label(row(18.0f), "ПКМ або Esc — скасувати", m_theme.textDim);
+            if (m_ui.Button(row(26.0f), "Скасувати")) m_placingForest = false;
+            m_ui.EndScroll(y);
             return;
         }
 
@@ -385,30 +561,160 @@ namespace woc
             const SettlementKind kind = static_cast<SettlementKind>(i);
             const SettlementKindInfo& info = db.Kind(kind);
 
-            const Rect r = row(28.0f);
+            const Rect r = row(36.0f);
             const bool affordable = clan->resources.CanAfford(info.buildCost);
-            if (m_ui.Button(r, "Заснувати: " + info.name, true, affordable))
+            if (m_ui.CostButton(r, "Заснувати: " + info.name,
+                                CostParts(info.buildCost, clan->resources, info.buildDays, m_theme),
+                                true, affordable))
             {
                 m_placingSettlement = true;
+                m_placingForest = false;
                 m_placingKind = kind;
                 m_status = "Оберіть місце на карті";
                 m_statusTimer = 4.0f;
             }
 
             m_ui.TooltipIfHovered(r,
-                "Ціна: " + FormatNumber(info.buildCost.money) + " срібла, " +
-                FormatNumber(info.buildCost.wood) + " дерева, " +
-                FormatNumber(info.buildCost.stone) + " каменю\n"
+                "Ціна: " + CostText(info.buildCost) + "\n"
+                "Робота: " + std::to_string(info.buildDays) + " днів — поки її не скінчено, "
+                "поселення нічого не дає й не тримає землі\n"
                 "Переселенців: " + std::to_string(info.settlers) + " з довколишніх поселень\n"
                 "Народ і віра — ваші власні." +
                 std::string(affordable ? "" : "\n\nБракує коштів"));
         }
 
-        y += 8.0f;
-        m_ui.Label(row(20.0f), "ШЛЯХИ", m_theme.accent);
-        m_ui.Paragraph({ view.x, y, view.w, 0.0f },
-                       "Дорогу прокладають від поселення: виберіть його й відкрийте "
-                       "«Прокласти шлях».", m_theme.textDim);
+        // --- planting a wood --------------------------------------------------------------
+        {
+            const f32 radius = ConfigManager::Get().Float("forestry/plantRadius", 150.0f);
+
+            // The panel cannot know where the player will put it, so the quoted price is for
+            // a full stand on bare ground. What he actually pays is worked out from the spot
+            // he picks - the less there is to plant there, the less it costs.
+            ResourceData sample;
+            i32 days = 0;
+            ForestrySystem::PriceStand(kPi * radius * radius, sample, days);
+
+            const Rect r = row(36.0f);
+            std::vector<UI::CostPart> detail{ { "до ", m_theme.textDim } };
+            for (const UI::CostPart& part : CostParts(sample, clan->resources, days, m_theme))
+            {
+                detail.push_back(part);
+            }
+            if (m_ui.CostButton(r, "Висадити ліс", detail, true,
+                                clan->resources.CanAfford(sample * 0.3f)))
+            {
+                m_placingForest = true;
+                m_placingSettlement = false;
+                m_status = "Оберіть, де саджати";
+                m_statusTimer = 4.0f;
+            }
+            m_ui.TooltipIfHovered(r,
+                "Селяни засаджують ділянку молодняком. Ліс не з'являється одразу — "
+                "йому потрібні роки, щоб піднятися.\n\n"
+                "Платять лише за ту землю, де справді є що садити: за вже лісисту чи "
+                "непридатну не беруть нічого.\n"
+                "Садити можна лише неподалік своїх поселень.");
+        }
+
+        // --- what is already under way -------------------------------------------------------
+        y += 10.0f;
+        m_ui.Label(row(20.0f), "ПОТОЧНІ БУДІВНИЦТВА", m_theme.accent);
+
+        bool anything = false;
+        // Every row is a way to the site: a click takes the camera there and, where the work
+        // belongs to a settlement, opens that settlement's panel on the page it concerns.
+        auto work = [&](const std::string& what, const std::string& where, f32 progress,
+                        const std::string& left, const Color& tint,
+                        const Vec2* site = nullptr, EntityId town = kInvalidId,
+                        SettlementTab page = SettlementTab::Overview)
+        {
+            anything = true;
+            const Rect r = row(34.0f);
+            if (site && m_ui.ListItem({ r.x - 3.0f, r.y - 2.0f, r.w + 6.0f, r.h + 2.0f }, "", false))
+            {
+                m_renderer.GetCamera().SetFocus(*site);
+                if (town != kInvalidId)
+                {
+                    m_selectionKind = SelectionKind::Settlement;
+                    m_selected = town;
+                    m_selectedCohorts.clear();
+                    m_settlementTab = page;
+                    m_panelMode = PanelMode::Selection;
+                    m_sidePanelScroll = 0.0f;
+                }
+            }
+            if (site) m_ui.TooltipIfHovered(r, "Показати на карті");
+            m_renderer.UIText(what, { r.x, r.y }, tint);
+            m_ui.LabelRight({ r.x, r.y, r.w, 16.0f }, left, m_theme.textDim);
+            m_renderer.UIText(where, { r.x, r.y + 15.0f }, m_theme.textDim, 0.82f);
+            m_ui.ProgressBar({ r.x, r.Bottom() - 6.0f, r.w, 5.0f }, Clamp01(progress), tint);
+        };
+
+        // Seats being raised, and improvements going up inside the ones that stand.
+        for (const auto& [id, settlement] : m_world.Settlements())
+        {
+            if (settlement.owner != clan->id) continue;
+
+            if (settlement.UnderConstruction())
+            {
+                work(settlement.KindInfo().name, settlement.name, settlement.FoundingProgress(),
+                     std::to_string(static_cast<i32>(settlement.foundingDaysLeft + 0.5f)) + " дн.",
+                     m_theme.warning, &settlement.position, id, SettlementTab::Overview);
+            }
+
+            for (const ConstructionOrder& order : settlement.construction)
+            {
+                const BuildingInfo* info = BuildingDatabase::Get().Find(order.buildingId);
+                const f32 total = info ? static_cast<f32>(std::max(1, info->buildDays)) : 1.0f;
+                const f32 done = 1.0f - static_cast<f32>(order.daysRemaining) / total;
+                work(info ? info->name : order.buildingId, settlement.name, done,
+                     std::to_string(order.daysRemaining) + " дн.", m_theme.accent,
+                     &settlement.position, id, SettlementTab::Buildings);
+            }
+        }
+
+        // Roadworks.
+        for (const RoadProject& project : RoadSystem::Get().Projects())
+        {
+            if (project.clan != clan->id) continue;
+            const f32 left = std::max(0.0f, project.daysTotal - project.daysDone);
+            // The road is shown at the point the work has reached.
+            Vec2 roadhead;
+            if (!project.tiles.empty())
+            {
+                const size_t at = std::min(project.stamped, project.tiles.size() - 1);
+                const f32 tilePixels = static_cast<f32>(m_world.Map().TilePixels());
+                roadhead = { (project.tiles[at].x + 0.5f) * tilePixels, (project.tiles[at].y + 0.5f) * tilePixels };
+            }
+            work("Шлях", project.label, project.daysDone / std::max(1.0f, project.daysTotal),
+                 std::to_string(static_cast<i32>(left + 0.5f)) + " дн.", m_theme.textStrong,
+                 project.tiles.empty() ? nullptr : &roadhead);
+        }
+
+        // Quarries being opened.
+        for (const MineSite& mine : m_world.Mines())
+        {
+            if (mine.owner != clan->id || !mine.UnderWay()) continue;
+            const Settlement* near = m_world.NearestSettlement(mine.position, 1e9f, clan->id);
+            work("Каменярня", near ? "коло " + near->name : std::string("на карті"),
+                 mine.Progress(),
+                 std::to_string(static_cast<i32>(mine.daysRemaining + 0.5f)) + " дн.",
+                 m_theme.textStrong, &mine.position);
+        }
+
+        // Woods being planted.
+        for (const Plantation& stand : ForestrySystem::Get().Plantations())
+        {
+            if (stand.clan != clan->id) continue;
+            const f32 left = std::max(0.0f, stand.daysTotal - stand.daysDone);
+            work("Висадка лісу", stand.label, stand.Progress(),
+                 std::to_string(static_cast<i32>(left + 0.5f)) + " дн.", Color::FromRGB(0x4D7A2D),
+                 &stand.centre);
+        }
+
+        if (!anything) m_ui.Label(row(20.0f), "Нічого не будується", m_theme.textDim);
+
+        m_ui.EndScroll(y);
     }
 
     void GameScene::DrawNamingDialog()
@@ -437,17 +743,11 @@ namespace woc
 
         if (m_ui.Button({ panel.Center().x - buttonWidth - 6.0f, buttonY, buttonWidth, 30.0f }, "Заснувати"))
         {
-            Clan* clan = m_world.HumanClan();
-            const EntityId created = clan
-                ? SettlementSystem::Get().Found(m_world, clan->id, m_placingKind, m_pendingSite, m_pendingName)
-                : kInvalidId;
-
-            if (created != kInvalidId)
+            const bool founded = Order(GameCommands::Found(m_placingKind, m_pendingSite, m_pendingName));
+            if (founded || OrdersDeferred())
             {
-                m_selectionKind = SelectionKind::Settlement;
-                m_selected = created;
                 m_settlementTab = SettlementTab::Overview;
-                m_status = "Поселення засновано";
+                m_status = "Поселення закладено";
             }
             else
             {
@@ -519,7 +819,15 @@ namespace woc
         }
 
         // --- the way in to each page ---------------------------------------------------------
-        if (playerOwns && m_settlementTab == SettlementTab::Overview)
+        if (playerOwns && settlement.UnderConstruction())
+        {
+            y += 10.0f;
+            m_ui.Paragraph({ content.x, y, content.w, 0.0f },
+                           "Поки не скінчено будівництво, тут нічого не звести й нікого не набрати.",
+                           m_theme.textDim);
+            y += 40.0f;
+        }
+        else if (playerOwns && m_settlementTab == SettlementTab::Overview)
         {
             y += 10.0f;
             struct Page { SettlementTab tab; const char* label; const char* key; const char* hint; };
@@ -573,6 +881,23 @@ namespace woc
 
         const f32 rowHeight = m_theme.rowHeight;
         auto row = [&]() { const Rect r{ content.x, y, content.w, rowHeight }; y += rowHeight + 2.0f; return r; };
+
+        if (settlement.UnderConstruction())
+        {
+            const Rect banner = row();
+            m_renderer.UIRect(banner, m_theme.warning.WithAlpha(0.18f));
+            m_renderer.UITextCentered("БУДУЄТЬСЯ", banner, m_theme.warning);
+
+            const Rect bar = row();
+            m_ui.Label(bar, "Готовність", m_theme.textDim);
+            m_ui.ProgressBar({ bar.x + 110.0f, bar.y + 5.0f, bar.w - 110.0f, 12.0f },
+                             settlement.FoundingProgress(), m_theme.warning,
+                             std::to_string(static_cast<i32>(settlement.foundingDaysLeft + 0.5f)) + " дн.");
+            m_ui.TooltipIfHovered(bar,
+                "Поки будують, поселення нічого не дає, не тримає землі\n"
+                "й не приймає ні наказів, ні наборів.");
+            y += 6.0f;
+        }
 
         m_ui.KeyValue(row(), m_theme.Label("owner"), owner ? owner->name : "Незалежне",
                       owner ? owner->color : m_theme.textDim);
@@ -658,7 +983,14 @@ namespace woc
             const BuildingInfo* info = BuildingDatabase::Get().Find(buildingId);
             const Rect r = row();
             m_ui.Label(r, "- " + (info ? info->name : buildingId), m_theme.text);
-            if (info) m_ui.TooltipIfHovered(r, info->description);
+
+            // What it is earning this month, as the settlement actually stands - the same sum
+            // with and without it, so siege, roads and the other buildings are all counted.
+            const std::string earns = ContributionText(
+                EconomySystem::Get().BuildingContribution(m_world, settlement, buildingId));
+            if (!earns.empty()) m_ui.LabelRight(r, earns, m_theme.positive);
+
+            if (info) m_ui.TooltipIfHovered(r, info->description, DescribeBuildingEffect(*info), m_theme.positive);
         }
         for (const ConstructionOrder& order : settlement.construction)
         {
@@ -676,6 +1008,7 @@ namespace woc
     void GameScene::DrawSettlementBuildings(const Rect& content, Settlement& settlement, f32& y)
     {
         SettlementSystem& settlements = SettlementSystem::Get();
+        const Clan* owner = m_world.FindClan(settlement.owner);
         const f32 rowHeight = m_theme.rowHeight;
         auto row = [&]() { const Rect r{ content.x, y, content.w, rowHeight }; y += rowHeight + 2.0f; return r; };
 
@@ -691,7 +1024,8 @@ namespace woc
                                 std::to_string(order.daysRemaining) + " дн.", m_theme.textDim);
                 if (m_ui.Button({ r.Right() - 22.0f, r.y, 20.0f, r.h }, "x"))
                 {
-                    settlements.CancelConstruction(m_world, settlement.id, order.buildingId);
+                    Order(GameCommands::CancelBuild(settlement.id, order.buildingId));
+                    break;   // the queue has been rewritten under us
                 }
             }
             y += 8.0f;
@@ -704,12 +1038,16 @@ namespace woc
         for (const BuildOption& option : options)
         {
             if (!option.building) continue;
-            const Rect r{ content.x, y, content.w, 26.0f };
-            y += 28.0f;
+            const Rect r{ content.x, y, content.w, 36.0f };
+            y += 38.0f;
 
-            if (m_ui.Button(r, option.building->name, option.allowed, option.affordable))
+            const ResourceData purse = owner ? owner->resources : ResourceData{};
+            if (m_ui.CostButton(r, option.building->name,
+                                CostParts(option.building->cost, purse,
+                                          option.building->buildDays, m_theme),
+                                option.allowed, option.affordable))
             {
-                settlements.StartConstruction(m_world, settlement.id, option.building->id);
+                Order(GameCommands::Build(settlement.id, option.building->id));
             }
 
             const ResourceData& cost = option.building->cost;
@@ -719,7 +1057,7 @@ namespace woc
                 std::to_string(option.building->buildDays) + " дн.";
             if (!option.allowed && !option.blockedReason.empty()) tooltip += "\n\n" + option.blockedReason;
             else if (!option.affordable) tooltip += "\n\nБракує коштів";
-            m_ui.TooltipIfHovered(r, tooltip);
+            m_ui.TooltipIfHovered(r, tooltip, DescribeBuildingEffect(*option.building), m_theme.positive);
         }
     }
 
@@ -748,24 +1086,112 @@ namespace woc
                       target ? m_theme.text : m_theme.accent);
         y += 6.0f;
 
+        // What is being mustered. The town raises one company at a time; the rest wait.
+        if (!settlement.recruitQueue.empty())
+        {
+            m_ui.Label(row(), "НАБИРАЄТЬСЯ", m_theme.accent);
+            for (size_t i = 0; i < settlement.recruitQueue.size(); ++i)
+            {
+                const RecruitOrder& order = settlement.recruitQueue[i];
+                const UnitData& raised = UnitDatabase::Get().Stats(settlement.raceId, order.role);
+                const Rect r{ content.x, y, content.w, 30.0f };
+                y += 32.0f;
+
+                const bool active = i == 0;
+                m_renderer.UIText(raised.name + "  (" + std::to_string(order.headCount) + ")",
+                                  { r.x, r.y }, active ? m_theme.textStrong : m_theme.textDim);
+                const std::string left = active
+                    ? std::to_string(static_cast<i32>(std::ceil(std::max(0.0f, order.hoursLeft)))) + " год."
+                    : "у черзі";
+                m_ui.LabelRight({ r.x, r.y, r.w - 26.0f, 16.0f }, left, m_theme.textDim);
+                if (active)
+                {
+                    m_ui.ProgressBar({ r.x, r.Bottom() - 8.0f, r.w - 26.0f, 5.0f }, order.Progress(), m_theme.accent);
+                }
+                const Rect cancel{ r.Right() - 22.0f, r.y, 20.0f, 20.0f };
+                if (m_ui.Button(cancel, "x"))
+                {
+                    Order(GameCommands::CancelRecruit(settlement.id, static_cast<i32>(i)));
+                    break;   // the queue has been rewritten under us
+                }
+                m_ui.TooltipIfHovered(cancel, "Скасувати: люди повернуться додому, половину срібла буде повернено.");
+            }
+            y += 6.0f;
+        }
+
+        // Men cost twice: once to raise and then every month they stay under the banner.
+        // The second figure is the one that ruins a treasury, so it goes on the button too.
+        const f32 upkeepScale = ConfigManager::Get().Float("economy/cohortUpkeepPerUnit", 0.04f) * 25.0f;
+
+        // One key per kind of company, in the order the list shows them: the lord's own
+        // retinue, then foot, bow, horse and horse-bow. Always with Shift - the bare letters
+        // turn the settlement's pages, so a company can be ordered and the page left at once.
+        struct RecruitKey { UnitRole role; Key key; const char* label; };
+        static const RecruitKey kRecruitKeys[] = {
+            { UnitRole::Aristocrat,  Key::Z, "Shift + Z" },
+            { UnitRole::Swordsman,   Key::X, "Shift + X" },
+            { UnitRole::Archer,      Key::C, "Shift + C" },
+            { UnitRole::Cavalry,     Key::V, "Shift + V" },
+            { UnitRole::HorseArcher, Key::B, "Shift + B" },
+        };
+
         const std::vector<RecruitOption> options = settlements.RecruitOptions(m_world, settlement.id);
         for (const RecruitOption& option : options)
         {
-            const Rect r{ content.x, y, content.w, 26.0f };
-            y += 28.0f;
+            const Rect r{ content.x, y, content.w, 38.0f };
+            y += 40.0f;
+
+            const RecruitKey* shortcut = nullptr;
+            for (const RecruitKey& entry : kRecruitKeys)
+            {
+                if (entry.role == option.role) { shortcut = &entry; break; }
+            }
+            const bool keyed = shortcut && !m_ui.WantsKeyboard() && m_input.IsKeyDown(Key::Shift) &&
+                               m_input.WasKeyPressed(shortcut->key);
+
+            const UnitData& stats = UnitDatabase::Get().Stats(settlement.raceId, option.role);
+            const f32 upkeep = stats.upkeep * static_cast<f32>(option.headCount) * upkeepScale;
+
+            ResourceData price;
+            price.money = option.cost;
 
             const std::string label = option.name + "  (" + std::to_string(option.headCount) + ")";
-            if (m_ui.Button(r, label, option.blockedReason.empty() || option.affordable, option.affordable))
+            // The time on the button is the muster: how long before the company stands in
+            // the square. Drill comes after, and is in the tooltip.
+            const Clan* purseOwner = m_world.FindClan(settlement.owner);
+            std::vector<UI::CostPart> detail = CostParts(
+                price, purseOwner ? purseOwner->resources : ResourceData{},
+                static_cast<i32>(stats.raiseHours + 0.5f), m_theme, "год.");
+            detail.push_back({ "  ·  утримання " + Round(upkeep) + " ср/міс", m_theme.textDim });
+
+            const bool clicked = m_ui.CostButton(r, label, detail,
+                                                 option.blockedReason.empty() || option.affordable,
+                                                 option.affordable);
+            if (shortcut)
             {
-                const EntityId result = settlements.Recruit(m_world, settlement.id, destination, option.role);
-                if (result != kInvalidId)
+                m_renderer.UIText(shortcut->label, { r.x + 8.0f, r.y + (r.h - m_renderer.TextHeight(0.85f)) * 0.5f },
+                                  m_theme.textDim, 0.85f);
+            }
+            if (clicked || (keyed && option.affordable))
+            {
+                if (Order(GameCommands::Recruit(settlement.id, destination, option.role)) ||
+                    OrdersDeferred())
                 {
-                    m_status = "Загін набрано";
+                    m_status = settlement.recruitQueue.size() > 1 ? "Загін поставлено в чергу"
+                                                                   : "Загін набирається";
                     m_statusTimer = 2.5f;
                 }
             }
-            std::string tooltip = "Ціна: " + FormatNumber(option.cost) + " срібла";
-            if (!option.affordable && !option.blockedReason.empty()) tooltip += "\n" + option.blockedReason;
+
+            std::string tooltip = stats.name +
+                "\nЗбір: " + Round(stats.raiseHours) + " год. (місто набирає по одному загону, решта чекає в черзі)" +
+                "\nВишкіл: " + Round(stats.trainDays) + " дн. у гарнізоні (у полі — довше)" +
+                "\nНабір: " + Round(option.cost) + " срібла" +
+                "\nУтримання: " + Round(upkeep) + " срібла та " +
+                Round(ConfigManager::Get().Float("economy/foodPerUnitPerMonth", 0.02f) *
+                      static_cast<f32>(option.headCount)) + " їжі на місяць";
+            if (!option.blockedReason.empty()) tooltip += "\n\n" + option.blockedReason;
+            if (shortcut) tooltip += std::string("\n\nКлавіша: ") + shortcut->label;
             m_ui.TooltipIfHovered(r, tooltip);
         }
     }
@@ -811,16 +1237,17 @@ namespace woc
             if (!other) continue;
 
             const RoadPlan plan = roads.Plan(m_world, settlement.id, otherId);
-            const Rect r{ content.x, y, content.w, 26.0f };
-            y += 28.0f;
+            const Rect r{ content.x, y, content.w, 36.0f };
+            y += 38.0f;
 
             const bool affordable = plan.valid && owner->resources.CanAfford(plan.cost);
             const std::string label = other->name + "  (" +
-                FormatNumber(plan.metres / 1000.0f) + " км, " + FormatNumber(plan.cost.money) + ")";
+                FormatNumber(plan.metres / 1000.0f) + " км)";
 
-            if (m_ui.Button(r, label, plan.valid, affordable))
+            if (m_ui.CostButton(r, label, CostParts(plan.cost, owner->resources, plan.days, m_theme),
+                                plan.valid, affordable))
             {
-                roads.Begin(m_world, owner->id, plan);
+                Order(GameCommands::Road(settlement.id, otherId));
                 m_status = "Шлях розпочато";
                 m_statusTimer = 2.5f;
             }
@@ -880,14 +1307,18 @@ namespace woc
         else
         {
             const FaithInfo& faith = races.Faith(owner->faithId);
-            const Rect r{ content.x, y, content.w, 26.0f };
-            y += 28.0f;
+            const Rect r{ content.x, y, content.w, 36.0f };
+            y += 38.0f;
 
             const f32 cost = settlements.ConversionCost(m_world, settlement.id, owner->faithId);
-            if (m_ui.Button(r, "Навернути до віри " + faith.name + " (" + FormatNumber(cost) + ")",
-                            true, owner->resources.money >= cost))
+            ResourceData price;
+            price.money = cost;
+            if (m_ui.CostButton(r, "Навернути до віри " + faith.name,
+                                CostParts(price, owner->resources,
+                                          RaceDatabase::Get().ConversionDays(), m_theme),
+                                true, owner->resources.money >= cost))
             {
-                settlements.StartConversion(m_world, settlement.id, owner->faithId);
+                Order(GameCommands::Convert(settlement.id, owner->faithId));
             }
             m_ui.TooltipIfHovered(r, "Перевести мешканців у віру свого роду. "
                                      "Ціна залежить від людності та завзяття громади.");
@@ -902,7 +1333,7 @@ namespace woc
             y += 30.0f;
             if (m_ui.Button(r, "Відпустити на волю"))
             {
-                settlements.GrantIndependence(m_world, settlement.id);
+                Order(GameCommands::Independence(settlement.id));
                 m_settlementTab = SettlementTab::Overview;
             }
             m_ui.TooltipIfHovered(r, "Поселення більше не платить данини, зате й не бунтує.");
@@ -913,7 +1344,7 @@ namespace woc
             const bool allowed = settlement.kind == SettlementKind::Village;
             if (m_ui.Button(r, "Спалити дотла", allowed))
             {
-                settlements.Raze(m_world, settlement.id, owner->id);
+                Order(GameCommands::Raze(settlement.id));
                 m_selectionKind = SelectionKind::None;
                 m_selected = kInvalidId;
                 m_settlementTab = SettlementTab::Overview;
@@ -1036,11 +1467,11 @@ namespace woc
         const bool possible = amount > 0.0f && gain > 0.0f && m_tradeGive != m_tradeTake;
         if (m_ui.Button(deal, "Обміняти", possible))
         {
-            const f32 got = market.Trade(m_world, settlement.id, clan->id,
-                                         m_tradeGive, m_tradeTake, amount);
-            if (got > 0.0f)
+            if (Order(GameCommands::Trade(settlement.id, static_cast<i32>(m_tradeGive),
+                                          static_cast<i32>(m_tradeTake), amount)) ||
+                OrdersDeferred())
             {
-                m_status = "Обміняно на " + FormatNumber(got) + " " +
+                m_status = "Обміняно на " + FormatNumber(gain) + " " +
                            MarketSystem::ResourceName(m_tradeTake);
                 m_statusTimer = 3.0f;
             }
@@ -1113,10 +1544,13 @@ namespace woc
             return;
         }
 
-        const Rect button = row(30.0f);
-        if (m_ui.Button(button, "Освоїти каменярню", offer.allowed, offer.affordable))
+        const Rect button = row(38.0f);
+        if (m_ui.CostButton(button, "Освоїти каменярню",
+                            CostParts(offer.cost, player ? player->resources : ResourceData{},
+                                      offer.days, m_theme),
+                            offer.allowed, offer.affordable))
         {
-            if (settlements.DevelopMine(m_world, clanId, mine.id))
+            if (Order(GameCommands::DevelopMine(mine.id)) || OrdersDeferred())
             {
                 m_status = "Каменярню закладено";
                 m_statusTimer = 2.5f;
@@ -1126,6 +1560,95 @@ namespace woc
             "Ціна: " + FormatNumber(offer.cost.money) + " срібла, " +
             FormatNumber(offer.cost.wood) + " дерева\n\nРобота: " + std::to_string(offer.days) + " днів" +
             (offer.blockedReason.empty() ? std::string() : "\n\n" + offer.blockedReason));
+    }
+
+    void GameScene::DrawBanditCampPanel(const Rect& area, BanditCamp& camp)
+    {
+        const RaceDatabase& races = RaceDatabase::Get();
+        const Clan* band = m_world.FindClan(camp.clan);
+
+        const Rect view = area.Inset(m_theme.padding);
+        f32 y = view.y;
+        auto row = [&](f32 height = 0.0f)
+        {
+            const f32 h = height > 0.0f ? height : m_theme.rowHeight;
+            const Rect r{ view.x, y, view.w, h };
+            y += h + 2.0f;
+            return r;
+        };
+
+        m_renderer.UISprite(SpriteId::BanditCamp, { view.x, y, 32.0f, 32.0f },
+                            Color::FromRGB(0x8A8A8A));
+        const f32 titleHeight = m_renderer.TextHeight(1.2f);
+        m_renderer.UIText("Розбійницький табір", { view.x + 40.0f, y + 2.0f }, m_theme.textStrong, 1.2f);
+        m_renderer.UIText(band ? band->name : "Невідома ватага",
+                          { view.x + 40.0f, y + 2.0f + titleHeight }, m_theme.textDim);
+        y += titleHeight + m_renderer.TextHeight() + 8.0f;
+
+        m_ui.KeyValue(row(), m_theme.Label("race"), races.Race(camp.raceId).name, m_theme.text);
+
+        {
+            const Rect r = row();
+            m_ui.Label(r, "Цілість", m_theme.textDim);
+            m_ui.ProgressBar({ r.x + 110.0f, r.y + 5.0f, r.w - 110.0f, 12.0f }, camp.Health(),
+                             camp.Health() > 0.5f ? m_theme.negative : m_theme.warning,
+                             Percent(camp.Health()));
+        }
+
+        // How many of them are out on the roads at the moment, which is the figure that
+        // actually matters to a lord deciding whether to ride out.
+        i32 bands = 0;
+        u32 heads = 0;
+        for (const auto& [cohortId, cohort] : m_world.Cohorts())
+        {
+            if (cohort.homeCamp != camp.id || cohort.IsEmpty()) continue;
+            ++bands;
+            heads += m_world.CohortStrength(cohortId);
+        }
+        m_ui.KeyValue(row(), "Ватаг у полі", std::to_string(bands), m_theme.text);
+        if (heads > 0) m_ui.KeyValue(row(), "Людей у них", std::to_string(heads), m_theme.text);
+
+        y += 8.0f;
+        m_ui.Label(row(), "ПІД ПІДЛОГОЮ", m_theme.accent);
+        const ResourceData spoils = BanditSystem::Spoils(camp);
+        m_ui.KeyValue(row(), m_theme.Label("money"), FormatNumber(spoils.money), m_theme.text);
+        m_ui.KeyValue(row(), m_theme.Label("food"), FormatNumber(spoils.food), m_theme.text);
+        m_ui.KeyValue(row(), m_theme.Label("wood"), FormatNumber(spoils.wood), m_theme.text);
+        if (spoils.stone > 0.5f)
+        {
+            m_ui.KeyValue(row(), m_theme.Label("stone"), FormatNumber(spoils.stone), m_theme.text);
+        }
+
+        y += 10.0f;
+        y += m_ui.Paragraph({ view.x, y, view.w, 0.0f },
+                            "Табору не беруть в облогу й не займають — його палять. "
+                            "Пошліть військо (ПКМ по табору), і все, що там закопано, "
+                            "поїде до вашої скарбниці.", m_theme.textDim) + 8.0f;
+
+        // The order is given from the map, but saying so here saves a player hunting for it.
+        std::vector<Cohort*> armies = CommandableSelection();
+        if (armies.empty())
+        {
+            m_ui.Label(row(), "Виберіть військо, щоб віддати наказ", m_theme.textDim);
+            return;
+        }
+
+        const Rect storm = row(30.0f);
+        if (m_ui.HighlightButton(storm, "Спалити табір (" + std::to_string(armies.size()) + ")",
+                                 m_theme.negative))
+        {
+            i32 ordered = 0;
+            for (Cohort* army : armies)
+            {
+                if (Order(GameCommands::Task(army->id, TaskType::Storm, camp.position, camp.id)) ||
+                    OrdersDeferred())
+                {
+                    ++ordered;
+                }
+            }
+            m_status = ordered > 0 ? "Військо йде палити табір" : "Туди не пройти";
+            m_statusTimer = 3.0f;
+        }
     }
 
     // =====================================================================================
@@ -1159,7 +1682,13 @@ namespace woc
         }
 
         const Clan* clan = m_world.FindClan(cohort.clan);
-        const Rect view = area.Inset(m_theme.padding);
+        const Rect area_ = area.Inset(m_theme.padding);
+
+        // The panel scrolls. It used to run straight down the sidebar and simply stop at the
+        // bottom edge, which was tolerable until the splitting list was unfolded: everything
+        // below it - "split off the marked", "or simply in two", the garrison and disband
+        // buttons - was then off the end of the world with no way to reach it.
+        const Rect view = m_ui.BeginScroll(area_, 900.0f, m_sidePanelScroll);
 
         f32 y = view.y;
         auto row = [&](f32 height = 0.0f)
@@ -1295,10 +1824,23 @@ namespace woc
                 m_selectedCharacter = kInvalidId;
             }
             m_renderer.UIText(role.name, { r.x + 10.0f, r.y + 4.0f }, m_theme.textStrong);
+
+            // The company's mark in the right-hand corner, in its own white: on the map the
+            // marks wear the owner's colours, in the panel they only have to say what it is.
+            const Vec4& mark = UnitIconPixels(unit->role);
+            const f32 markHeight = 13.6f;   // two sheet pixels per pixel, less 15 %
+            const f32 markPixel = markHeight / 8.0f;
+            const f32 markWidth = mark.z * markPixel;
+            const Rect markRect{ r.Right() - 8.0f - markWidth,
+                                 r.y + 4.0f + (8.0f - mark.w) * markPixel * 0.5f,
+                                 markWidth, mark.w * markPixel };
+            m_renderer.UIAtlas(m_renderer.AtlasUV(mark.x, mark.y, mark.z, mark.w), markRect,
+                               m_theme.textStrong);
+
             const std::string muster = unit->Wounded() > 0
                 ? std::to_string(unit->Strength()) + " чол. (+" + std::to_string(unit->Wounded()) + ")"
                 : std::to_string(unit->Strength()) + " чол.";
-            m_ui.LabelRight({ r.x, r.y + 4.0f, r.w - 6.0f, 18.0f }, muster, m_theme.textStrong);
+            m_ui.LabelRight({ r.x, r.y + 4.0f, r.w - 18.0f - 13.0f * markPixel, 18.0f }, muster, m_theme.textStrong);
 
             // Its own pace in the same units the column's is given in, so the two can be
             // compared without translating anything in one's head.
@@ -1310,8 +1852,15 @@ namespace woc
 
             m_ui.ProgressBar({ r.x + 8.0f, r.Bottom() - 9.0f, r.w - 16.0f, 5.0f },
                            unit->StrengthFraction(), ValueColor(unit->StrengthFraction(), m_theme));
+            // Drill sits beside the strength bar: a full company of half-trained men is
+            // not the same thing as a full company, and the panel should not pretend it is.
+            m_ui.ProgressBar({ r.x + 8.0f, r.Bottom() - 3.0f, r.w - 16.0f, 3.0f },
+                             unit->training, m_theme.textStrong);
+
             m_ui.TooltipIfHovered(r, role.name + " · власний хід " +
                 FormatNumber(speed * baseSpeed * supplyFactor) + " за день" +
+                "\nВишкіл: " + Percent(unit->training) + " (повний за " +
+                FormatNumber(unit->Stats().trainDays) + " дн. у гарнізоні)" +
                 (laggard ? "\n\nСаме цей підрозділ і стримує всю колону." : ""));
         }
 
@@ -1320,24 +1869,28 @@ namespace woc
         if (clan && humanState && clan->state == humanState->id)
         {
             y += 10.0f;
+            // Toggle flips the flag itself, so the value below is already what the player
+            // has just asked for. The order is what makes it true on the host as well.
             const Rect raid = row(24.0f);
-            if (m_ui.Toggle(raid, "Грабувати поселення", cohort.mayRaid) &&
-                !cohort.mayRaid && cohort.currentTask.type == TaskType::Raid)
+            bool raiding = cohort.mayRaid;
+            if (m_ui.Toggle(raid, "Грабувати поселення", raiding))
             {
-                cohort.currentTask.Clear();
+                // Alone the flag flips at once; in a party it flips at the order's tick, on
+                // every machine together - setting it here too would put this one ahead.
+                if (!OrdersDeferred()) cohort.mayRaid = raiding;
+                Order(GameCommands::SetRaiding(cohort.id, raiding));
             }
             m_ui.TooltipIfHovered(raid, "Дозволяє загону грабувати ворожі поселення (Shift + ПКМ). "
                                     "Грабунок і захоплення можливі лише під час війни.");
 
             const Rect suppress = row(24.0f);
-            if (m_ui.Toggle(suppress, "Усмиряти повстання", cohort.suppressRevolts))
+            bool suppressing = cohort.suppressRevolts;
+            if (m_ui.Toggle(suppress, "Усмиряти повстання", suppressing))
             {
                 // Turning it off stops the march it is already on, so the order is not a
                 // thing the player has to chase after.
-                if (!cohort.suppressRevolts && cohort.currentTask.type == TaskType::Attack)
-                {
-                    cohort.currentTask.Clear();
-                }
+                if (!OrdersDeferred()) cohort.suppressRevolts = suppressing;
+                Order(GameCommands::SetSuppressing(cohort.id, suppressing));
             }
             m_ui.TooltipIfHovered(suppress,
                 "Загін сам іде на найближче повстання в межах держави й тримає його,\n"
@@ -1347,22 +1900,83 @@ namespace woc
             const Rect stop = row(26.0f);
             if (m_ui.Button(stop, "Зупинити"))
             {
-                cohort.currentTask.Clear();
+                Order(GameCommands::Stop(cohort.id));
             }
 
-            // Leaving a fight is always allowed. It costs order and a parting blow, and it
-            // is very often the right thing to do.
-            const Rect leave = row(26.0f);
-            const bool fighting = battle != nullptr;
-            if (m_ui.Button(leave, "Відступити", fighting || cohort.currentTask.IsMoving()))
+            // Retreat is a battlefield decision and belongs nowhere else: outside a fight
+            // there is nothing to break contact with, so the button is simply not there.
+            // While there is, it is the loudest thing on the panel - orange, because the
+            // moment to use it is the moment the player is least inclined to look for it.
+            if (battle)
             {
-                BattleSystem::Get().Withdraw(m_world, cohort.id);
-                m_status = cohort.DisplayName() + " відходить";
-                m_statusTimer = 2.5f;
+                const Rect leave = row(30.0f);
+                if (m_ui.HighlightButton(leave, "ВІДСТУПИТИ", m_theme.warning))
+                {
+                    Order(GameCommands::Withdraw(cohort.id));
+                    m_status = cohort.DisplayName() + " відходить";
+                    m_statusTimer = 2.5f;
+                }
+                m_ui.TooltipIfHovered(leave,
+                    "Вийти з бою. Ворог устигне вдарити навздогін, а лад похитнеться -\n"
+                    "але військо збережеться.");
             }
-            m_ui.TooltipIfHovered(leave, fighting
-                ? "Вийти з бою. Ворог устигне вдарити навздогін, а лад похитнеться -\nале військо збережеться."
-                : "Відірватися й відійти.");
+
+            // The reverse of dividing: several banners under one. Only worth offering when
+            // the player actually has a band selected, so it appears with the band and goes
+            // away with it.
+            if (m_selectedCohorts.size() >= 2)
+            {
+                std::vector<Cohort*> selected = CommandableSelection();
+                // Only the hosts that have actually come up to this one can join it.
+                const f32 reach = ConfigManager::Get().Float("movement/mergeDistance", 40.0f);
+                std::vector<Cohort*> band;
+                for (Cohort* host : selected)
+                {
+                    if (host->id == cohort.id || Distance(host->position, cohort.position) <= reach)
+                        band.push_back(host);
+                }
+                const bool anyoneClose = std::any_of(band.begin(), band.end(),
+                    [&](const Cohort* host) { return host->id != cohort.id; });
+                if (!anyoneClose) band.clear();
+                const size_t apart = selected.size() - (anyoneClose ? band.size() : 1);
+                u32 units = 0;
+                for (const Cohort* host : band) units += static_cast<u32>(host->units.size());
+                const u32 limit = UnitDatabase::Get().MaxUnitsPerCohort();
+
+                const Rect merge = row(26.0f);
+                if (m_ui.Button(merge, "Звести докупи (" + std::to_string(std::max<size_t>(band.size(), 1)) +
+                                       "/" + std::to_string(selected.size()) + ")",
+                                band.size() >= 2))
+                {
+                    std::vector<EntityId> ids;
+                    ids.reserve(band.size());
+                    // The host whose panel is open leads; the rest fall in behind it.
+                    ids.push_back(cohort.id);
+                    for (const Cohort* host : band)
+                    {
+                        if (host->id != cohort.id) ids.push_back(host->id);
+                    }
+
+                    if (Order(GameCommands::Merge(ids)) || OrdersDeferred())
+                    {
+                        SelectCohort(cohort.id, false);
+                        m_status = "Війська зведено докупи";
+                        m_statusTimer = 2.5f;
+                        m_ui.EndScroll(y);
+                        return;
+                    }
+                    m_status = "Звести не вдалося: більше нема куди";
+                    m_statusTimer = 3.0f;
+                }
+                m_ui.TooltipIfHovered(merge, band.size() < 2
+                    ? std::string("Загони мають зійтися впритул, щоб стати одним військом. "
+                                  "Відведіть їх в одне місце.")
+                    : units > limit
+                    ? "Під одним стягом більше ніж " + std::to_string(limit) +
+                      " підрозділів не ходить — зайві лишаться окремо."
+                    : std::string("Загони, що стоять поруч, стануть одним. Лад буде за найгіршим із них.") +
+                      (apart > 0 ? "\n" + std::to_string(apart) + " — надто далеко й лишаться окремо." : ""));
+            }
 
             // Dividing a host costs it some of its order, which is the price of the freedom
             // to be in two places at once.
@@ -1406,14 +2020,13 @@ namespace woc
                 const Rect confirm = row(26.0f);
                 if (m_ui.Button(confirm, "Відділити позначені", viable))
                 {
-                    const EntityId fresh = MovementSystem::Get().Split(m_world, cohort.id, m_splitUnits);
-                    if (fresh != kInvalidId)
+                    if (Order(GameCommands::Split(cohort.id, m_splitUnits)) || OrdersDeferred())
                     {
                         m_splitPickerOpen = false;
                         m_splitUnits.clear();
-                        SelectCohort(fresh, false);
                         m_status = "Загін відділено";
                         m_statusTimer = 2.5f;
+                        m_ui.EndScroll(y);
                         return;
                     }
                 }
@@ -1424,14 +2037,13 @@ namespace woc
                 const Rect half = row(26.0f);
                 if (m_ui.Button(half, "Або просто надвоє"))
                 {
-                    const EntityId fresh = MovementSystem::Get().SplitInHalf(m_world, cohort.id);
-                    if (fresh != kInvalidId)
+                    if (Order(GameCommands::SplitInHalf(cohort.id)) || OrdersDeferred())
                     {
                         m_splitPickerOpen = false;
                         m_splitUnits.clear();
-                        SelectCohort(fresh, false);
                         m_status = "Загін розділено";
                         m_statusTimer = 2.5f;
+                        m_ui.EndScroll(y);
                         return;
                     }
                 }
@@ -1443,8 +2055,8 @@ namespace woc
             {
                 if (nearest)
                 {
-                    MovementSystem::Get().OrderTask(m_world, cohort.id, TaskType::Garrison,
-                                                    nearest->position, nearest->id);
+                    Order(GameCommands::Task(cohort.id, TaskType::Garrison,
+                                             nearest->position, nearest->id));
                 }
             }
 
@@ -1458,7 +2070,7 @@ namespace woc
                 {
                     const std::string name = cohort.DisplayName();
                     m_disbandTarget = kInvalidId;
-                    if (MovementSystem::Get().Disband(m_world, cohort.id))
+                    if (Order(GameCommands::Disband(cohort.id)) || OrdersDeferred())
                     {
                         m_selectionKind = SelectionKind::None;
                         m_selected = kInvalidId;
@@ -1466,6 +2078,7 @@ namespace woc
                         m_selectedCohorts.clear();
                         m_status = name + " розпущено";
                         m_statusTimer = 3.0f;
+                        m_ui.EndScroll(y);
                         return;
                     }
                 }
@@ -1478,6 +2091,8 @@ namespace woc
                 "Підрозділи буде розформовано, а люди повернуться до найближчого вашого поселення."
                 "\n\nУтримання війська припиниться. Скасувати це не можна.");
         }
+
+        m_ui.EndScroll(y);
     }
 
     void GameScene::DrawUnitDetails(const Rect& area, Unit& unit)
@@ -1812,7 +2427,7 @@ namespace woc
         std::vector<EntityId> others;
         for (const auto& [id, state] : m_world.States())
         {
-            if (id != self->id && !state.eliminated) others.push_back(id);
+            if (id != self->id && !state.eliminated && !state.outlaw) others.push_back(id);
         }
         std::sort(others.begin(), others.end());
 
@@ -1822,6 +2437,16 @@ namespace woc
             if (!other) continue;
 
             const Rect r = row(26.0f);
+            // A realm never seen is a blank on the map: no name, no banner, no embassy.
+            if (!diplomacy.Known(m_world, self->id, id))
+            {
+                m_ui.ListItem(r, "Невідома держава", false, m_theme.textDim);
+                m_ui.LabelRight(r, "Невідомо", m_theme.textDim);
+                m_ui.TooltipIfHovered(r, "Ваші люди ще не зустрічали цієї держави: ані її війська, ані її поселень.\n"
+                                         "Поки не зустрінуть — з нею не можна вести жодних справ.");
+                if (m_diplomacyTarget == id) m_diplomacyTarget = kInvalidId;
+                continue;
+            }
             if (m_ui.ListItem(r, other->name, id == m_diplomacyTarget, other->color))
             {
                 m_diplomacyTarget = id;
@@ -1862,7 +2487,8 @@ namespace woc
             const Rect r = row(26.0f);
             if (m_ui.Button(r, action.label, action.available))
             {
-                if (diplomacy.Perform(m_world, self->id, m_diplomacyTarget, action.kind))
+                if (Order(GameCommands::Diplomacy(m_diplomacyTarget, static_cast<i32>(action.kind))) ||
+                    OrdersDeferred())
                 {
                     m_status = action.label;
                     m_statusTimer = 3.0f;

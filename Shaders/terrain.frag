@@ -33,7 +33,9 @@ layout(push_constant) uniform Push
 {
     vec4 forestRect;   // xy = uv min, zw = uv max inside the atlas
     vec4 fieldRect;
-    vec4 settings;     // x = forest tiling, y = field tiling, z = border width, w = tint
+    vec4 settings;     // x = forest tiling, y = field tiling, w = tint,
+                       // z = border width; its SIGN says how the frontier is drawn -
+                       // positive for the hard tile edge, negative for a softened one
     vec4 texel;        // xy = 1/ownerSize, zw = sun direction xy
     vec4 water;        // rgb = the palette colour of water, a = match tolerance
     vec4 flags;        // x = draw the thematic layer, y = edge strength,
@@ -129,7 +131,15 @@ void main()
     if (distance(color, pc.water.rgb) < pc.water.a) discard;
 
     // --- forest ------------------------------------------------------------------------
-    float forest = textureLod(uTrees, vUV, 0.0).r;
+    // The mask is one texel per tile and is filtered smoothly, so a full wood used to bleed
+    // half a tile past its own ground and paint trees over the beach beside it and over the
+    // hillside above it. The nearest-texel reading of the same mask says which tile the
+    // fragment is actually standing on, and that decides whether there is a wood here at
+    // all; the smooth reading is kept only to shade the inside of the stand.
+    vec2 treeTexels = vec2(textureSize(uTrees, 0));
+    vec2 treeCentre = (floor(vUV * treeTexels) + 0.5) / treeTexels;
+    float forestHere = textureLod(uTrees, treeCentre, 0.0).r;
+    float forest = forestHere > 0.02 ? max(textureLod(uTrees, vUV, 0.0).r, forestHere * 0.5) : 0.0;
     if (forest > 0.02)
     {
         vec4 tile = SampleTile(pc.forestRect, vUV, pc.settings.x);
@@ -141,7 +151,12 @@ void main()
     // field read as a faint smudge, so the density only decides *where* the field reaches:
     // past the knee the pattern is painted at full strength, and only the ragged outer
     // edge of the worked land is left to fade into the grass.
-    float field = textureLod(uFields, vUV, 0.0).r;
+    // Gated the same way as the wood above: ploughland stops at the edge of the tile that
+    // is ploughed, instead of smearing furrows across the sand next door.
+    vec2 fieldTexels = vec2(textureSize(uFields, 0));
+    vec2 fieldCentre = (floor(vUV * fieldTexels) + 0.5) / fieldTexels;
+    float fieldHere = textureLod(uFields, fieldCentre, 0.0).r;
+    float field = fieldHere > 0.01 ? max(textureLod(uFields, vUV, 0.0).r, fieldHere * 0.5) : 0.0;
     if (field > 0.01)
     {
         vec4 tile = SampleTile(pc.fieldRect, vUV, pc.settings.y);
@@ -168,22 +183,69 @@ void main()
     if (ownerSlot > 0 && pc.flags.x > 0.5)
     {
         vec4 realm = palette.colors[min(ownerSlot, 127)];
-        color = mix(color, realm.rgb, pc.settings.w * realm.a);
 
-        // A frontier is any texel whose neighbours carry a different slot. In realm mode
-        // that draws the outer border; in influence mode the same test also draws the
-        // seams between one lord's holdings, because each holding owns its own slot.
-        float edge = 0.0;
-        for (int i = -1; i <= 1; ++i)
+        float width = abs(pc.settings.z);
+        bool soften = pc.settings.z < 0.0;
+
+        if (!soften)
         {
-            for (int j = -1; j <= 1; ++j)
+            // The frontier as the grid actually has it: a texel whose neighbour carries a
+            // different slot is on the line, and the line is therefore a tile wide and
+            // steps like one. In realm mode that draws the outer border; in influence mode
+            // the same test also draws the seams between one lord's holdings, because each
+            // holding owns its own slot.
+            color = mix(color, realm.rgb, pc.settings.w * realm.a);
+
+            float edge = 0.0;
+            for (int i = -1; i <= 1; ++i)
             {
-                if (i == 0 && j == 0) continue;
-                float n = textureLod(uOwner, vUV + vec2(float(i), float(j)) * pc.texel.xy * pc.settings.z, 0.0).r;
-                edge = max(edge, abs(n - ownerRaw) > 0.001 ? 1.0 : 0.0);
+                for (int j = -1; j <= 1; ++j)
+                {
+                    if (i == 0 && j == 0) continue;
+                    float n = textureLod(uOwner, vUV + vec2(float(i), float(j)) * pc.texel.xy * width, 0.0).r;
+                    edge = max(edge, abs(n - ownerRaw) > 0.001 ? 1.0 : 0.0);
+                }
             }
+            color = mix(color, realm.rgb, edge * pc.flags.y);
         }
-        color = mix(color, realm.rgb, edge * pc.flags.y);
+        else
+        {
+            // The same question asked over a disc instead of over one ring: how much of the
+            // neighbourhood answers to this slot. Deep inside a realm that is 1, on the line
+            // it is about a half, and outside it falls away - so the tint fades out across
+            // the frontier and the border itself becomes the band where the answer is
+            // uncertain. Corners round off for free, because a corner has less of its
+            // neighbourhood on the inside than a straight stretch does.
+            const vec2 kTaps[16] = vec2[16](
+                vec2( 1.0,  0.0), vec2(-1.0,  0.0), vec2( 0.0,  1.0), vec2( 0.0, -1.0),
+                vec2( 0.7,  0.7), vec2(-0.7,  0.7), vec2( 0.7, -0.7), vec2(-0.7, -0.7),
+                vec2( 2.0,  0.0), vec2(-2.0,  0.0), vec2( 0.0,  2.0), vec2( 0.0, -2.0),
+                vec2( 1.5,  1.5), vec2(-1.5,  1.5), vec2( 1.5, -1.5), vec2(-1.5, -1.5));
+
+            float inside = 1.4;          // the texel itself, weighted as the near ring
+            float total = 1.4;
+            for (int i = 0; i < 16; ++i)
+            {
+                float weight = i < 8 ? 1.0 : 0.5;
+                vec2 uv = vUV + kTaps[i] * pc.texel.xy * width;
+                float n = textureLod(uOwner, uv, 0.0).r;
+                inside += weight * (abs(n - ownerRaw) < 0.001 ? 1.0 : 0.0);
+                total += weight;
+            }
+            float cover = inside / total;
+
+            // The fill holds over the interior and lets go near the line, over a long ramp
+            // so the country bleeds into the frontier instead of stopping at it.
+            color = mix(color, realm.rgb, pc.settings.w * realm.a * smoothstep(0.18, 0.78, cover));
+
+            // ...and the line is drawn where the cover is passing through a half: a broad,
+            // soft band with no edge of its own, whatever the tiles underneath are doing.
+            // The falloff is deliberately gentle - a drawn border on an old map is a wash of
+            // colour along the march, not a wire.
+            float distance = (cover - 0.50) / 0.34;
+            float edge = exp(-distance * distance);
+            color = mix(color, realm.rgb, edge * pc.flags.y * 0.85);
+        }
     }
 
     // --- lighting -----------------------------------------------------------------------

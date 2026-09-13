@@ -8,6 +8,7 @@
 #include "Core/Paths.h"
 #include "Audio/AudioSystem.h"
 #include "Core/Settings.h"
+#include "Net/NetSession.h"
 #include "Game/Factories/NamePool.h"
 #include "Game/Map/TerrainTypes.h"
 #include "Game/World/BuildingDatabase.h"
@@ -100,6 +101,7 @@ namespace woc
         // Sound is a comfort, not a requirement: a machine without a device still plays.
         if (AudioSystem::Get().Initialise())
         {
+            AudioSystem::Get().SetMasterVolume(Settings::Get().masterVolume);
             AudioSystem::Get().SetMusicVolume(Settings::Get().musicVolume);
             AudioSystem::Get().SetSfxVolume(Settings::Get().sfxVolume);
         }
@@ -185,6 +187,12 @@ namespace woc
             {
                 WOC_PROFILE("audio");
                 AudioSystem::Get().Update(deltaTime);
+            }
+            {
+                // The session is pumped wherever the player happens to be: a lobby keeps
+                // running while its host is reading the settings screen.
+                WOC_PROFILE("net");
+                NetSession::Get().Update(deltaTime);
             }
 
             UI::Get().BeginFrame();
@@ -293,6 +301,7 @@ namespace woc
     void Application::Shutdown()
     {
         WOC_LOG_INFO("Shutting down");
+        NetSession::Get().Shutdown();
         SceneManager::Get().Shutdown();
         EventBus::Get().Clear();
         AudioSystem::Get().Shutdown();

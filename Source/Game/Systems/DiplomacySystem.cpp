@@ -1,5 +1,8 @@
 #include "DiplomacySystem.h"
+#include "CoverageSystem.h"
+#include "FogSystem.h"
 #include "../Factories/CharacterFactory.h"
+#include "../Players/AIPlayer.h"
 #include "../World/World.h"
 #include "../../Core/Config.h"
 #include "../../Core/Random.h"
@@ -106,24 +109,113 @@ namespace woc
         return parts;
     }
 
+    bool DiplomacySystem::Known(const World& world, EntityId from, EntityId to) const
+    {
+        if (!FogSystem::Get().IsEnabled()) return true;
+        const State* a = world.FindState(from);
+        return a && a->HasMet(to);
+    }
+
+    void DiplomacySystem::UpdateContacts(World& world)
+    {
+        const i32 today = world.Time().TotalDays();
+        const bool quiet = m_lastContactDay < 0 || today < m_lastContactDay || today - m_lastContactDay > 20;
+        m_lastContactDay = today;
+
+        std::vector<EntityId> realms;
+        for (const auto& [id, state] : world.States())
+        {
+            if (!state.eliminated && !state.outlaw) realms.push_back(id);
+        }
+        std::sort(realms.begin(), realms.end());
+
+        auto meet = [&](EntityId a, EntityId b, bool announce)
+        {
+            State* first = world.FindState(a);
+            State* second = world.FindState(b);
+            if (!first || !second || first->HasMet(b)) return;
+            first->met.push_back(b);
+            if (!second->HasMet(a)) second->met.push_back(a);
+
+            const State* human = world.HumanState();
+            if (!announce || !human || (human->id != a && human->id != b)) return;
+            const State* stranger = human->id == a ? second : first;
+            world.Announce("ВІДКРИТО КОРОЛІВСТВО", stranger->name, stranger->color);
+            world.Log("Наші люди вперше зустріли державу " + stranger->name, stranger->color);
+        };
+
+        // Without fog the whole map is common knowledge.
+        if (!FogSystem::Get().IsEnabled())
+        {
+            for (EntityId a : realms)
+                for (EntityId b : realms)
+                    if (a < b) meet(a, b, false);
+            return;
+        }
+
+        ConfigManager& config = ConfigManager::Get();
+        const f32 settlementSight = config.Float("fog/settlementSight", 190.0f);
+        const f32 cohortSight = config.Float("fog/cohortSight", 150.0f);
+
+        // Every realm's eyes and every realm's presence, gathered once.
+        struct Mark { EntityId state; Vec2 position; f32 sight; };
+        std::vector<Mark> marks;
+        auto stateOfClan = [&](EntityId clanId) -> EntityId
+        {
+            const Clan* clan = world.FindClan(clanId);
+            return clan ? clan->state : kInvalidId;
+        };
+        for (const auto& [id, settlement] : world.Settlements())
+        {
+            const EntityId state = stateOfClan(settlement.owner);
+            if (state != kInvalidId) marks.push_back({ state, settlement.position, settlementSight });
+        }
+        for (const auto& [id, cohort] : world.Cohorts())
+        {
+            const EntityId state = stateOfClan(cohort.clan);
+            if (state != kInvalidId) marks.push_back({ state, cohort.position, cohortSight });
+        }
+
+        for (const Mark& seen : marks)
+        {
+            const State* owner = world.FindState(seen.state);
+            if (!owner || owner->outlaw || owner->eliminated) continue;
+
+            // Standing on somebody's land is being seen by him.
+            const EntityId groundClan = CoverageSystem::Get().OwnerAt(world, seen.position);
+            const EntityId groundState = stateOfClan(groundClan);
+            if (groundState != kInvalidId && groundState != seen.state) meet(groundState, seen.state, !quiet);
+
+            for (const Mark& eye : marks)
+            {
+                if (eye.state == seen.state) continue;
+                const State* watcher = world.FindState(eye.state);
+                if (!watcher || watcher->outlaw || watcher->HasMet(seen.state)) continue;
+                if (DistanceSq(eye.position, seen.position) > eye.sight * eye.sight) continue;
+                meet(eye.state, seen.state, !quiet);
+            }
+        }
+    }
+
     std::vector<DiplomaticAction> DiplomacySystem::AvailableActions(World& world, EntityId from, EntityId to) const
     {
         std::vector<DiplomaticAction> actions;
         const State* a = world.FindState(from);
         const State* b = world.FindState(to);
         if (!a || !b || from == to) return actions;
+        // Nobody sends an embassy to a kingdom he has only heard rumours of.
+        if (!Known(world, from, to)) return actions;
 
+        // Offers are always on the table: whether one is accepted is for the other side to say.
         const DiplomaticStance stance = a->StanceWith(to);
-        const f32 opinion = Opinion(world, from, to);
-        ConfigManager& config = ConfigManager::Get();
 
         if (stance == DiplomaticStance::War)
         {
             DiplomaticAction peace;
             peace.kind = DiplomaticAction::Kind::OfferPeace;
             peace.label = "Запропонувати мир";
-            peace.tooltip = "Припинити війну й укласти перемир'я";
-            peace.available = opinion > -70.0f;
+            peace.tooltip = "Запропонувати перемир'я. Держава вирішує сама: хто перемагає, той навряд чи погодиться";
+            peace.available = true;   // the enemy decides, not a gate
             actions.push_back(peace);
         }
         else
@@ -140,8 +232,8 @@ namespace woc
                 DiplomaticAction pact;
                 pact.kind = DiplomaticAction::Kind::NonAggression;
                 pact.label = "Пакт про ненапад";
-                pact.tooltip = "Зобов'язання не воювати";
-                pact.available = opinion > 0.0f;
+                pact.tooltip = "Запропонувати пакт про ненапад. Інша держава мусить погодитися";
+                pact.available = true;
                 actions.push_back(pact);
             }
 
@@ -150,16 +242,16 @@ namespace woc
                 DiplomaticAction alliance;
                 alliance.kind = DiplomaticAction::Kind::Alliance;
                 alliance.label = "Укласти союз";
-                alliance.tooltip = "Воювати разом проти спільних ворогів";
-                alliance.available = opinion >= config.Float("diplomacy/allianceOpinionThreshold", 45.0f);
+                alliance.tooltip = "Запропонувати союз: воювати разом проти спільних ворогів. Інша держава мусить погодитися";
+                alliance.available = true;
                 actions.push_back(alliance);
             }
 
             DiplomaticAction marriage;
             marriage.kind = DiplomaticAction::Kind::ArrangeMarriage;
-            marriage.label = "Влаштувати шлюб";
-            marriage.tooltip = "Скріпити союз родинними зв'язками";
-            marriage.available = opinion > -20.0f;
+            marriage.label = "Укласти союз";
+            marriage.tooltip = "Скріпити союз родинними зв'язками: доми поріднюються, і двори тягнуться одне до одного надовго";
+            marriage.available = true;
             actions.push_back(marriage);
         }
         return actions;
@@ -167,13 +259,14 @@ namespace woc
 
     bool DiplomacySystem::Perform(World& world, EntityId from, EntityId to, DiplomaticAction::Kind kind)
     {
+        if (!Known(world, from, to)) return false;
         switch (kind)
         {
         case DiplomaticAction::Kind::DeclareWar:      DeclareWar(world, from, to); return true;
-        case DiplomaticAction::Kind::OfferPeace:      MakePeace(world, from, to); return true;
-        case DiplomaticAction::Kind::NonAggression:   SignNonAggression(world, from, to); return true;
-        case DiplomaticAction::Kind::Alliance:        FormAlliance(world, from, to); return true;
-        case DiplomaticAction::Kind::ArrangeMarriage: return ArrangeMarriage(world, from, to);
+        case DiplomaticAction::Kind::OfferPeace:
+        case DiplomaticAction::Kind::NonAggression:
+        case DiplomaticAction::Kind::Alliance:
+        case DiplomaticAction::Kind::ArrangeMarriage: return Offer(world, from, to, kind);
         case DiplomaticAction::Kind::BreakPact:       SetStance(world, from, to, DiplomaticStance::Neutral, 0);
                                                       AdjustOpinion(world, from, to, -25.0f);
                                                       return true;
@@ -316,7 +409,9 @@ namespace woc
         std::vector<EntityId> stateIds;
         for (const auto& [id, state] : world.States())
         {
-            if (!state.eliminated) stateIds.push_back(id);
+            // Outlaws keep no embassies: there is nobody to send one to and nothing to
+            // propose. They are at war with the world by definition.
+            if (!state.eliminated && !state.outlaw) stateIds.push_back(id);
         }
         std::sort(stateIds.begin(), stateIds.end());
 
@@ -347,6 +442,8 @@ namespace woc
                 if (other == id) continue;
                 State* target = world.FindState(other);
                 if (!target) continue;
+                // A court treats only with the realms it has actually come across.
+                if (!Known(world, id, other)) continue;
 
                 const DiplomaticStance stance = state->StanceWith(other);
                 const f32 opinion = Opinion(world, other, id);
@@ -358,25 +455,34 @@ namespace woc
                 }
                 else if (stance == DiplomaticStance::Neutral && opinion > 30.0f && random.Chance(0.04f))
                 {
-                    // Between two AIs a pact is simply signed; with the player it is asked.
-                    if (target->playerControlled) Propose(world, id, other, DiplomaticAction::Kind::NonAggression);
-                    else SignNonAggression(world, id, other);
+                    // Asked of anybody - a person in a dialog, an AI by its own lights.
+                    Offer(world, id, other, DiplomaticAction::Kind::NonAggression);
                 }
                 else if (stance == DiplomaticStance::NonAggression && opinion > 55.0f && random.Chance(0.02f))
                 {
-                    if (target->playerControlled) Propose(world, id, other, DiplomaticAction::Kind::Alliance);
-                    else FormAlliance(world, id, other);
+                    Offer(world, id, other, DiplomaticAction::Kind::Alliance);
                 }
                 else if (stance != DiplomaticStance::War && opinion > 45.0f && random.Chance(0.015f))
                 {
                     // A match between the two houses: offered to the player, arranged with
                     // anyone else.
-                    if (target->playerControlled) Propose(world, id, other, DiplomaticAction::Kind::ArrangeMarriage);
-                    else ArrangeMarriage(world, id, other);
+                    Offer(world, id, other, DiplomaticAction::Kind::ArrangeMarriage);
                 }
-                else if (stance == DiplomaticStance::War && opinion > -10.0f && random.Chance(0.06f))
+                else if (stance == DiplomaticStance::War && random.Chance(0.06f))
                 {
-                    MakePeace(world, id, other);
+                    // Whether to sue for peace is this lord's own reckoning of the war; whether
+                    // it is granted is the other side's.
+                    AIPlayer* lord = nullptr;
+                    for (const Scope<IPlayer>& player : world.Players())
+                    {
+                        if (player->StateId() == id && !player->IsHuman()) { lord = dynamic_cast<AIPlayer*>(player.get()); break; }
+                    }
+                    // Asking is the mirror of accepting: a lord who would accept peace from the
+                    // enemy is one who would ask for it.
+                    if (lord && lord->WeighOffer(world, other, static_cast<i32>(DiplomaticAction::Kind::OfferPeace)))
+                    {
+                        Offer(world, id, other, DiplomaticAction::Kind::OfferPeace);
+                    }
                 }
             }
         }
@@ -392,7 +498,7 @@ namespace woc
         {
         case DiplomaticAction::Kind::NonAggression:  return "ПРОПОЗИЦІЯ ПАКТУ";
         case DiplomaticAction::Kind::Alliance:       return "ПРОПОЗИЦІЯ СОЮЗУ";
-        case DiplomaticAction::Kind::ArrangeMarriage: return "ПРОПОЗИЦІЯ ШЛЮБУ";
+        case DiplomaticAction::Kind::ArrangeMarriage: return "ПРОПОЗИЦІЯ СОЮЗУ";
         case DiplomaticAction::Kind::OfferPeace:     return "ПРОПОЗИЦІЯ МИРУ";
         default:                                     return "ПОСОЛЬСТВО";
         }
@@ -409,8 +515,8 @@ namespace woc
             return "пропонує оборонний союз. Кожен стає на захист іншого, коли на того "
                    "нападуть.";
         case DiplomaticAction::Kind::ArrangeMarriage:
-            return "пропонує шлюб між домами. Родичання вабить обидва двори одне до одного "
-                   "надовго.";
+            return "пропонує укласти союз і скріпити його шлюбом між домами. Родичання "
+                   "вабить обидва двори одне до одного надовго.";
         case DiplomaticAction::Kind::OfferPeace:
             return "пропонує скінчити війну й розійтися з перемир'ям.";
         default:
@@ -418,8 +524,78 @@ namespace woc
         }
     }
 
+    namespace
+    {
+        const char* OfferNoun(DiplomaticAction::Kind kind)
+        {
+            switch (kind)
+            {
+            case DiplomaticAction::Kind::OfferPeace:      return "мир";
+            case DiplomaticAction::Kind::NonAggression:   return "пакт про ненапад";
+            case DiplomaticAction::Kind::Alliance:        return "союз";
+            case DiplomaticAction::Kind::ArrangeMarriage: return "шлюбний союз";
+            default:                                      return "угоду";
+            }
+        }
+    }
+
+    bool DiplomacySystem::Offer(World& world, EntityId from, EntityId to, DiplomaticAction::Kind kind)
+    {
+        State* asker = world.FindState(from);
+        State* target = world.FindState(to);
+        if (!asker || !target || from == to) return false;
+
+        // A person decides for himself, in his own time: the embassy waits on his answer.
+        if (target->playerControlled)
+        {
+            Propose(world, from, to, kind);
+            world.Log(asker->name + " шле посольство до " + target->name + ": " + OfferNoun(kind),
+                      Color::FromRGB(0x9AA3AB));
+            return true;
+        }
+
+        // An AI answers at once.
+        AIPlayer* lord = nullptr;
+        for (const Scope<IPlayer>& player : world.Players())
+        {
+            if (player->StateId() == to && !player->IsHuman())
+            {
+                lord = dynamic_cast<AIPlayer*>(player.get());
+                break;
+            }
+        }
+        const bool accepted = lord && lord->WeighOffer(world, from, static_cast<i32>(kind));
+
+        const State* human = world.HumanState();
+        const bool ours = human && human->id == from;
+        if (accepted)
+        {
+            switch (kind)
+            {
+            case DiplomaticAction::Kind::OfferPeace:      MakePeace(world, from, to); break;
+            case DiplomaticAction::Kind::NonAggression:   SignNonAggression(world, from, to); break;
+            case DiplomaticAction::Kind::Alliance:        FormAlliance(world, from, to); break;
+            case DiplomaticAction::Kind::ArrangeMarriage: ArrangeMarriage(world, from, to); break;
+            default: break;
+            }
+            if (ours) world.Announce("ПОСОЛЬСТВО ПРИЙНЯТО", target->name + " погоджується на " + OfferNoun(kind),
+                                     Color::FromRGB(0x5AA860));
+        }
+        else
+        {
+            // Being turned down is remembered, a little, by the one who asked.
+            AdjustOpinion(world, from, to, -ConfigManager::Get().Float("diplomacy/refusalOpinion", 8.0f) * 0.5f);
+            world.Log(target->name + " відкидає пропозицію держави " + asker->name + ": " + OfferNoun(kind),
+                      Color::FromRGB(0xB0413E));
+            if (ours) world.Announce("ПОСОЛЬСТВО ВІДКИНУТО", target->name + " не погоджується на " + OfferNoun(kind),
+                                     Color::FromRGB(0xB0413E));
+        }
+        return true;
+    }
+
     void DiplomacySystem::Propose(World& world, EntityId from, EntityId to, DiplomaticAction::Kind kind)
     {
+        if (!Known(world, from, to)) return;
         // One embassy at a time about one thing: an AI that rolls the same offer twice in a
         // month should not stack two identical dialogs on the player.
         for (const DiplomaticOffer& waiting : m_offers)
@@ -429,11 +605,55 @@ namespace woc
         m_offers.push_back({ from, to, kind, world.Time().TotalDays() });
     }
 
-    void DiplomacySystem::AcceptOffer(World& world)
+    Json DiplomacySystem::ToJson() const
     {
-        if (m_offers.empty()) return;
-        const DiplomaticOffer offer = m_offers.front();
-        m_offers.pop_front();
+        Json root = Json::MakeObject();
+        root["lastContactDay"] = m_lastContactDay;
+        Json list = Json::MakeArray();
+        for (const DiplomaticOffer& offer : m_offers)
+        {
+            Json node = Json::MakeObject();
+            node["from"] = EncodeId(offer.from);
+            node["to"] = EncodeId(offer.to);
+            node["kind"] = static_cast<i64>(offer.kind);
+            node["day"] = offer.dayMade;
+            list.Push(node);
+        }
+        root["offers"] = list;
+        return root;
+    }
+
+    void DiplomacySystem::FromJson(const Json& root)
+    {
+        m_offers.clear();
+        m_lastContactDay = root["lastContactDay"].AsInt(-1);
+        for (const Json& node : root["offers"].AsArray())
+        {
+            DiplomaticOffer offer;
+            offer.from = DecodeId(node["from"]);
+            offer.to = DecodeId(node["to"]);
+            offer.kind = static_cast<DiplomaticAction::Kind>(node["kind"].AsInt(0));
+            offer.dayMade = node["day"].AsInt(0);
+            m_offers.push_back(offer);
+        }
+    }
+
+    const DiplomaticOffer* DiplomacySystem::OfferFor(EntityId state) const
+    {
+        for (const DiplomaticOffer& offer : m_offers)
+        {
+            if (offer.to == state) return &offer;
+        }
+        return nullptr;
+    }
+
+    bool DiplomacySystem::AcceptOffer(World& world, EntityId state)
+    {
+        const auto it = std::find_if(m_offers.begin(), m_offers.end(),
+                                     [state](const DiplomaticOffer& o) { return o.to == state; });
+        if (it == m_offers.end()) return false;
+        const DiplomaticOffer offer = *it;
+        m_offers.erase(it);
 
         switch (offer.kind)
         {
@@ -443,13 +663,16 @@ namespace woc
         case DiplomaticAction::Kind::OfferPeace:      MakePeace(world, offer.from, offer.to); break;
         default: break;
         }
+        return true;
     }
 
-    void DiplomacySystem::DeclineOffer(World& world)
+    bool DiplomacySystem::DeclineOffer(World& world, EntityId state)
     {
-        if (m_offers.empty()) return;
-        const DiplomaticOffer offer = m_offers.front();
-        m_offers.pop_front();
+        const auto it = std::find_if(m_offers.begin(), m_offers.end(),
+                                     [state](const DiplomaticOffer& o) { return o.to == state; });
+        if (it == m_offers.end()) return false;
+        const DiplomaticOffer offer = *it;
+        m_offers.erase(it);
 
         // A refusal is not an insult, but it is remembered.
         AdjustOpinion(world, offer.to, offer.from,
@@ -457,5 +680,6 @@ namespace woc
 
         const State* asker = world.FindState(offer.from);
         if (asker) world.Log("Відмовлено посольству держави " + asker->name, Color::FromRGB(0x9AA3AB));
+        return true;
     }
 }

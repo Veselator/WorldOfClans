@@ -8,6 +8,8 @@
 #include "Types.h"
 #include "Math.h"
 #include <random>
+#include <sstream>
+#include <string>
 
 namespace woc
 {
@@ -18,6 +20,21 @@ namespace woc
         explicit Random(u32 seed) : m_engine(seed) {}
 
         void Seed(u32 seed) { m_engine.seed(seed); }
+
+        /// The engine's whole state as text, and back. A resynchronised machine must draw the
+        /// same numbers from here on as the machine it was synchronised to.
+        std::string State() const
+        {
+            std::ostringstream out;
+            out << m_engine;
+            return out.str();
+        }
+        void SetState(const std::string& state)
+        {
+            if (state.empty()) return;
+            std::istringstream in(state);
+            in >> m_engine;
+        }
 
         /// Uniform integer in [minInclusive, maxInclusive].
         i32 Range(i32 minInclusive, i32 maxInclusive)

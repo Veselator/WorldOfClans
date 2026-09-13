@@ -2,10 +2,16 @@
 #pragma once
 
 #include "IScene.h"
+#include "MapGenPanel.h"
 #include "../Core/Math.h"
+#include "../Core/Json.h"
 #include "../Game/Map/MapData.h"
+#include "../Game/Map/MapGenerator.h"
 #include "../Game/Map/MapLoader.h"
 #include "../Game/World/SettlementDatabase.h"
+
+#include <deque>
+#include <vector>
 
 namespace woc
 {
@@ -30,6 +36,25 @@ namespace woc
     {
         Level,   // drive the ground towards a chosen height
         Sculpt   // raise with the left button, lower with the right
+    };
+
+    /// Which half of the opening window is showing: the maps that exist, or the generator.
+    enum class BrowserTab
+    {
+        Open,
+        Generate
+    };
+
+    /// One step back. The tiles are the map itself; the objects are everything standing on
+    /// it. Both are kept, because a stroke of the terrain brush and the placing of a town
+    /// are the same kind of edit as far as the designer's hand is concerned.
+    struct EditorSnapshot
+    {
+        std::vector<Tile> tiles;
+        u32 pixelWidth = 0;
+        u32 pixelHeight = 0;
+        u32 tilePixels = 4;
+        Json objects;
     };
 
     class EditorScene final : public IScene
@@ -57,6 +82,11 @@ namespace woc
         void RemoveAt(const Vec2& mapPosition);
 
         void GenerateTerrain();
+        /// Files the current state away so Ctrl+Z can come back to it. Called once at the
+        /// start of every edit, never in the middle of one - a stroke is one step, not one
+        /// step per frame it is held.
+        void PushUndo();
+        void Undo();
         void RebuildColorLayer();
         void PushToRenderer(bool rebuildMesh);
 
@@ -85,7 +115,7 @@ namespace woc
 
         EditorTool m_tool = EditorTool::Terrain;
         i32 m_terrainIndex = 3;
-        i32 m_brushRadius = 24;
+        f32 m_brushRadius = 24.0f;
         f32 m_brushStrength = 0.6f;
         HeightMode m_heightMode = HeightMode::Sculpt;
         f32 m_heightTarget = 0.5f;
@@ -93,14 +123,13 @@ namespace woc
         i32 m_ownerSlot = 0;           // 0 = independent, otherwise editor clan index
         i32 m_raceIndex = 0;
 
-        // Procedural generation parameters, all live-editable.
-        i32 m_genSeed = 20250910;
-        std::string m_seedText = "20250910";
-        bool m_randomSeed = true;
-        f32 m_genScale = 3.2f;
-        f32 m_genSeaLevel = 0.42f;
-        f32 m_genMountains = 0.78f;
-        f32 m_genForest = 0.45f;
+        // The generator's parameters - the same structure, the same panel and the same
+        // stored values the party screen uses, so the two cannot drift apart.
+        MapGenSettings m_mapGen;
+        MapGenPanelState m_genPanel;
+        /// How many realms "one island per realm" should make, when the editor is asked
+        /// for such a world. The editor has no party, so the designer says.
+        i32 m_genRealms = 5;
         i32 m_genWidth = 1920;
         i32 m_genHeight = 1080;
 
@@ -108,6 +137,8 @@ namespace woc
         std::string m_folderName = "NewMap";
         /// The browser is up when the editor has nothing open, and whenever asked for.
         bool m_browserOpen = true;
+        BrowserTab m_browserTab = BrowserTab::Open;
+        f32 m_browserGenScroll = 0.0f;
         f32 m_browserScroll = 0.0f;
         std::string m_newName = "Нова карта";
         std::string m_newFolder = "NewMap";
@@ -125,5 +156,11 @@ namespace woc
         Coord m_dirtyMax{ -1, -1 };
         f32 m_meshRefreshTimer = 0.0f;
         EntityId m_inspected = kInvalidId;
+
+        /// The way back. Bounded, because each step is the whole tile grid - a few megabytes
+        /// on a large map - and a designer who needs forty steps back wants a saved file.
+        std::deque<EditorSnapshot> m_undo;
+        /// True while a mouse button is held, so one stroke files one step and not sixty.
+        bool m_strokeOpen = false;
     };
 }

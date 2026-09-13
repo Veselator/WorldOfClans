@@ -1,5 +1,6 @@
 #include "BattleSystem.h"
 #include "CoverageSystem.h"
+#include "../Factories/CharacterFactory.h"
 #include "../Factories/EvaluatorFactory.h"
 #include "../World/World.h"
 #include "../../Core/Config.h"
@@ -51,6 +52,65 @@ namespace woc
                 bonus = std::max(bonus, unit->Stats().commandBonus);
             }
             return 1.0f + bonus;
+        }
+    }
+
+    std::vector<EntityId> BattleSide::Hosts() const
+    {
+        std::vector<EntityId> hosts;
+        hosts.reserve(support.size() + 1);
+        if (cohort != kInvalidId) hosts.push_back(cohort);
+        for (EntityId id : support) hosts.push_back(id);
+        return hosts;
+    }
+
+    bool BattleSide::Includes(EntityId cohortId) const
+    {
+        if (cohortId == cohort) return true;
+        return std::find(support.begin(), support.end(), cohortId) != support.end();
+    }
+
+    f32 BattleSystem::SidePower(const World& world, const BattleSide& side, const BattleSide& enemy) const
+    {
+        f32 total = 0.0f;
+        for (EntityId id : side.Hosts())
+        {
+            const Cohort* host = world.FindCohort(id);
+            if (!host || host->IsEmpty()) continue;
+            total += EvaluatePower(world, id, enemy.cohort, host->position);
+        }
+        return total;
+    }
+
+    u32 BattleSystem::SideStrength(const World& world, const BattleSide& side) const
+    {
+        u32 total = 0;
+        for (EntityId id : side.Hosts()) total += world.CohortStrength(id);
+        return total;
+    }
+
+    void BattleSystem::SpreadDamage(World& world, BattleSide& side, f32 damage, u32& deadOut,
+                                    u32& hurtOut, f32 killShare)
+    {
+        if (damage <= 0.0f) return;
+
+        const std::vector<EntityId> hosts = side.Hosts();
+        f32 total = 0.0f;
+        for (EntityId id : hosts) total += static_cast<f32>(world.CohortStrength(id));
+        if (total <= 0.0f) return;
+
+        // Every host takes the share of the blow that matches the share of the line it is
+        // holding. A small detachment beside a great host does not soak up half the battle.
+        for (EntityId id : hosts)
+        {
+            Cohort* host = world.FindCohort(id);
+            if (!host || host->IsEmpty()) continue;
+
+            const f32 share = static_cast<f32>(world.CohortStrength(id)) / total;
+            u32 dead = 0, hurt = 0;
+            ApplyDamage(world, *host, damage * share, dead, hurt, killShare);
+            deadOut += dead;
+            hurtOut += hurt;
         }
     }
 
@@ -123,9 +183,190 @@ namespace woc
     {
         for (const BattleReport& battle : m_active)
         {
-            if (battle.attacker.cohort == cohortId || battle.defender.cohort == cohortId) return &battle;
+            if (battle.attacker.Includes(cohortId) || battle.defender.Includes(cohortId)) return &battle;
         }
         return nullptr;
+    }
+
+    bool BattleSystem::FindRetreat(const World& world, const Cohort& cohort, const Vec2& threat,
+                                   f32 distance, Vec2& out) const
+    {
+        const MapData& map = world.Map();
+        if (!map.IsValid()) return false;
+
+        Vec2 away = cohort.position - threat;
+        if (away.LengthSq() < 0.0001f) away = { 1.0f, 0.0f };
+        away = away.Normalized();
+        const f32 baseAngle = std::atan2(away.y, away.x);
+
+        // Straight back first, then wider and wider to either side - but never past a
+        // right angle and a bit, because the way out does not lie through the enemy.
+        const f32 sweep = ConfigManager::Get().Float("battle/retreatSweepDegrees", 110.0f) *
+                          kPi / 180.0f;
+        const f32 stepAngle = sweep / 6.0f;
+
+        // And if the full distance is blocked, a shorter step still counts as giving ground.
+        const f32 tries[] = { 1.0f, 0.7f, 0.45f };
+
+        for (f32 reach : tries)
+        {
+            for (i32 step = 0; step <= 6; ++step)
+            {
+                for (i32 sign = (step == 0 ? 0 : -1); sign <= 1; sign += 2)
+                {
+                    const f32 angle = baseAngle + static_cast<f32>(sign * step) * stepAngle;
+                    const Vec2 candidate{
+                        cohort.position.x + std::cos(angle) * distance * reach,
+                        cohort.position.y + std::sin(angle) * distance * reach
+                    };
+
+                    const Coord tile = map.ToTile(candidate);
+                    if (!map.InBounds(tile)) continue;
+                    if (map.MoveCost(tile) <= 0.0f) continue;          // sea, cliff, bog
+                    // Falling back towards the enemy is not falling back.
+                    if (DistanceSq(candidate, threat) <= DistanceSq(cohort.position, threat)) continue;
+
+                    out = candidate;
+                    return true;
+                }
+                if (step == 0) continue;
+            }
+        }
+        return false;
+    }
+
+    void BattleSystem::FallBack(World& world, Cohort& host, const Vec2& threat, f32 distance)
+    {
+        Vec2 landing;
+        if (FindRetreat(world, host, threat, distance, landing))
+        {
+            host.position = landing;
+            return;
+        }
+
+        // Nowhere to go. A host with the enemy in front of it and nothing behind it fights
+        // where it stands, and what is left of it does not walk off the field.
+        const Clan* clan = world.FindClan(host.clan);
+        world.Log(host.DisplayName() + ": оточено, відступати нікуди — військо полягло",
+                  clan ? clan->color : Color::FromRGB(0xB0413E));
+        world.DestroyCohort(host.id);
+    }
+
+    void BattleSystem::CullBrokenHosts(World& world, BattleReport& report)
+    {
+        ConfigManager& config = ConfigManager::Get();
+        const f32 orderFloor = config.Float("battle/collapseOrganisation", 0.08f);
+        const f32 strengthFloor = config.Float("battle/collapseStrength", 0.12f);
+
+        for (BattleSide* side : { &report.attacker, &report.defender })
+        {
+            for (EntityId id : side->Hosts())
+            {
+                Cohort* host = world.FindCohort(id);
+                if (!host || host->IsEmpty()) continue;
+
+                // Few men and no order left to hold them: this is not a host any more.
+                u32 strength = 0, full = 0;
+                for (EntityId unitId : host->units)
+                {
+                    const Unit* unit = world.FindUnit(unitId);
+                    if (!unit) continue;
+                    strength += unit->Strength();
+                    full += unit->establishment;
+                }
+                if (full == 0) continue;
+
+                const f32 fraction = static_cast<f32>(strength) / static_cast<f32>(full);
+                if (host->organisation > orderFloor || fraction > strengthFloor) continue;
+
+                const Clan* clan = world.FindClan(host->clan);
+                world.Log(host->DisplayName() + " перестає існувати як військо",
+                          clan ? clan->color : Color::FromRGB(0xB0413E));
+                side->losses += strength;
+                world.DestroyCohort(id);
+            }
+        }
+    }
+
+    namespace
+    {
+        Json SideToJson(const BattleSide& side)
+        {
+            Json node = Json::MakeObject();
+            node["cohort"] = EncodeId(side.cohort);
+            node["clan"] = EncodeId(side.clan);
+            node["name"] = side.name;
+            node["start"] = static_cast<i64>(side.startingStrength);
+            node["losses"] = static_cast<i64>(side.losses);
+            node["hurt"] = static_cast<i64>(side.hurt);
+            node["power"] = side.power;
+            node["routed"] = side.routed;
+            node["withdrew"] = side.withdrew;
+            node["support"] = EncodeIdList(side.support);
+            node["flanked"] = side.flanked;
+            return node;
+        }
+
+        BattleSide SideFromJson(const Json& node)
+        {
+            BattleSide side;
+            side.cohort = DecodeId(node["cohort"]);
+            side.clan = DecodeId(node["clan"]);
+            side.name = node["name"].AsString();
+            side.startingStrength = static_cast<u32>(node["start"].AsInt(0));
+            side.losses = static_cast<u32>(node["losses"].AsInt(0));
+            side.hurt = static_cast<u32>(node["hurt"].AsInt(0));
+            side.power = node["power"].AsFloat(0.0f);
+            side.routed = node["routed"].AsBool(false);
+            side.withdrew = node["withdrew"].AsBool(false);
+            side.support = DecodeIdList(node["support"]);
+            side.flanked = node["flanked"].AsFloat(0.0f);
+            return side;
+        }
+    }
+
+    Json BattleSystem::ToJson() const
+    {
+        Json root = Json::MakeObject();
+        root["recoveryCarry"] = m_recoveryCarry;
+        Json list = Json::MakeArray();
+        for (const BattleReport& battle : m_active)
+        {
+            Json node = Json::MakeObject();
+            node["day"] = battle.day;
+            node["x"] = battle.position.x;
+            node["y"] = battle.position.y;
+            node["attacker"] = SideToJson(battle.attacker);
+            node["defender"] = SideToJson(battle.defender);
+            node["terrain"] = battle.terrainName;
+            node["concluded"] = battle.concluded;
+            node["victor"] = EncodeId(battle.victor);
+            node["round"] = battle.roundProgress;
+            node["elapsed"] = battle.elapsedDays;
+            list.Push(node);
+        }
+        root["active"] = list;
+        return root;
+    }
+
+    void BattleSystem::FromJson(const Json& root)
+    {
+        m_active.clear();
+        m_recoveryCarry = root["recoveryCarry"].AsFloat(0.0f);
+        for (const Json& node : root["active"].AsArray())
+        {
+            BattleReport battle;
+            battle.day = node["day"].AsInt(0);
+            battle.position = { node["x"].AsFloat(0.0f), node["y"].AsFloat(0.0f) };
+            battle.attacker = SideFromJson(node["attacker"]);
+            battle.defender = SideFromJson(node["defender"]);
+            battle.terrainName = node["terrain"].AsString();
+            battle.concluded = node["concluded"].AsBool(false);
+            battle.victor = DecodeId(node["victor"]);
+            battle.roundProgress = node["round"].AsFloat(0.0f);
+            battle.elapsedDays = node["elapsed"].AsFloat(0.0f);
+            m_active.push_back(std::move(battle));
+        }
     }
 
     bool BattleSystem::Withdraw(World& world, EntityId cohortId)
@@ -140,7 +381,7 @@ namespace woc
         const BattleReport* battle = BattleOf(cohortId);
         if (battle)
         {
-            const EntityId enemyId = battle->attacker.cohort == cohortId
+            const EntityId enemyId = battle->attacker.Includes(cohortId)
                                    ? battle->defender.cohort : battle->attacker.cohort;
             if (const Cohort* enemy = world.FindCohort(enemyId))
             {
@@ -151,8 +392,19 @@ namespace woc
                             config.Float("battle/withdrawPartingBlow", 0.8f),
                             dead, hurt, config.Float("battle/withdrawKillShare", 0.5f));
 
-                const Vec2 away = (cohort->position - enemy->position).Normalized();
-                cohort->position += away * config.Float("battle/withdrawDistance", 55.0f);
+                // Onto ground that will hold them. A host that "withdrew" into the sea
+                // was the old behaviour, and a host with nowhere at all to withdraw to is
+                // surrounded - it does not get to leave.
+                Vec2 landing;
+                if (!FindRetreat(world, *cohort, enemy->position,
+                                 config.Float("battle/withdrawDistance", 55.0f), landing))
+                {
+                    const Clan* trapped = world.FindClan(cohort->clan);
+                    world.Log(cohort->DisplayName() + ": відступати нікуди — оточено",
+                              trapped ? trapped->color : Color::FromRGB(0xB0413E));
+                    return false;
+                }
+                cohort->position = landing;
             }
         }
 
@@ -162,10 +414,85 @@ namespace woc
         cohort->inBattle = false;
         cohort->currentTask.Clear();
 
+        // A host that came up alongside and then thought better of it simply leaves the
+        // line; the fight goes on without it. Only when the side's own banner walks away
+        // does the whole thing need untangling, and the next tick does that by itself.
+        for (BattleReport& active : m_active)
+        {
+            for (BattleSide* side : { &active.attacker, &active.defender })
+            {
+                side->support.erase(std::remove(side->support.begin(), side->support.end(), cohortId),
+                                    side->support.end());
+            }
+        }
+
         const Clan* clan = world.FindClan(cohort->clan);
         world.Log(cohort->DisplayName() + " виходить з бою",
                   clan ? clan->color : Color::FromRGB(0x9AA3AB));
         return true;
+    }
+
+    void BattleSystem::ReinforceGarrisons(World& world, i32 days)
+    {
+        if (days <= 0) return;
+
+        ConfigManager& config = ConfigManager::Get();
+        const UnitDatabase& db = UnitDatabase::Get();
+        Random& random = GlobalRandom();
+
+        // What a settlement can give up in a day, and what it costs the treasury per head.
+        const f32 sharePerDay = config.Float("recruitment/garrisonRefillPerDay", 0.02f);
+        const i32 populationFloor = config.Int("recruitment/garrisonPopulationFloor", 160);
+        const f32 headCost = config.Float("recruitment/refillCostPerHead", 0.45f);
+
+        for (auto& [cohortId, cohort] : world.Cohorts())
+        {
+            if (cohort.garrisonOf == kInvalidId) continue;
+            if (cohort.inBattle) continue;
+
+            Settlement* home = world.FindSettlement(cohort.garrisonOf);
+            if (!home || home->owner != cohort.clan) continue;
+            if (home->besiegedBy != kInvalidId || home->UnderConstruction()) continue;
+            if (home->population <= populationFloor) continue;
+
+            Clan* clan = world.FindClan(cohort.clan);
+            if (!clan) continue;
+
+            for (EntityId unitId : cohort.units)
+            {
+                Unit* unit = world.FindUnit(unitId);
+                if (!unit) continue;
+                if (unit->Strength() >= unit->establishment) continue;
+
+                // A lord's own person is not replaced out of the village.
+                if (db.Role(unit->role).single) continue;
+
+                const u32 gap = unit->establishment - unit->Strength();
+                u32 intake = static_cast<u32>(std::max(1.0f,
+                    static_cast<f32>(unit->establishment) * sharePerDay * static_cast<f32>(days)));
+                intake = std::min(intake, gap);
+                intake = std::min<u32>(intake, static_cast<u32>(home->population - populationFloor));
+                if (intake == 0) continue;
+
+                const f32 cost = static_cast<f32>(intake) * headCost;
+                if (clan->resources.money < cost) break;      // nothing more is affordable today
+
+                clan->resources.money -= cost;
+                home->population -= static_cast<i32>(intake);
+
+                for (u32 i = 0; i < intake; ++i)
+                {
+                    Character& person = CharacterFactory::CreateCommoner(world, unit->raceId,
+                                                                          home->name, random);
+                    unit->characters.push_back(person.id);
+                }
+
+                // Raw men dilute a veteran company: the drill of the whole unit slips back
+                // towards that of a recruit, in proportion to how many of them there are.
+                const f32 share = static_cast<f32>(intake) / static_cast<f32>(unit->Strength());
+                unit->training = Clamp01(unit->training * (1.0f - share) + db.BaseTraining() * share);
+            }
+        }
     }
 
     void BattleSystem::TickRecovery(World& world, f32 days)
@@ -176,6 +503,9 @@ namespace woc
 
         const f32 elapsed = std::floor(m_recoveryCarry);
         m_recoveryCarry -= elapsed;
+
+        // Gaps in a quartered host are made good out of the town it sits in.
+        ReinforceGarrisons(world, static_cast<i32>(elapsed));
 
         ConfigManager& config = ConfigManager::Get();
         const f32 healPerDay = config.Float("battle/woundedHealPerDay", 0.045f);
@@ -291,6 +621,99 @@ namespace woc
         for (EntityId unitId : emptied) world.DestroyUnit(unitId);
     }
 
+    void BattleSystem::GatherSupport(World& world, BattleReport& report)
+    {
+        ConfigManager& config = ConfigManager::Get();
+        const f32 reach = m_engagementRadius *
+                          config.Float("battle/supportRadiusFactor", 2.2f);
+
+        for (auto& [id, cohort] : world.Cohorts())
+        {
+            if (cohort.IsEmpty() || cohort.IsWithdrawing()) continue;
+            if (report.attacker.Includes(id) || report.defender.Includes(id)) continue;
+            if (cohort.garrisonOf != kInvalidId) continue;   // garrisons fight sieges, not fields
+            if (BattleOf(id)) continue;                      // already committed elsewhere
+            if (Distance(cohort.position, report.position) > reach) continue;
+
+            // Which line does it belong in? The one it is not at war with. A host that is
+            // hostile to both stays out of it - it has its own quarrel and will get its own
+            // battle when somebody closes.
+            const bool foeOfAttacker = world.AreHostile(cohort.clan, report.attacker.clan);
+            const bool foeOfDefender = world.AreHostile(cohort.clan, report.defender.clan);
+
+            BattleSide* side = nullptr;
+            if (foeOfDefender && !foeOfAttacker) side = &report.attacker;
+            else if (foeOfAttacker && !foeOfDefender) side = &report.defender;
+            if (!side) continue;
+
+            // ...and it must actually be friendly to the side it is joining: a third party
+            // at peace with both is a spectator.
+            const Clan* mine = world.FindClan(cohort.clan);
+            const Clan* theirs = world.FindClan(side->clan);
+            if (!mine || !theirs || mine->state != theirs->state) continue;
+
+            side->support.push_back(id);
+            side->startingStrength += world.CohortStrength(id);
+            cohort.currentTask.Clear();
+
+            world.Log(cohort.DisplayName() + " заходить у бій на підмогу",
+                      mine->color);
+        }
+    }
+
+    void BattleSystem::MeasureFlanks(World& world, BattleReport& report)
+    {
+        report.attacker.flanked = 0.0f;
+        report.defender.flanked = 0.0f;
+
+        ConfigManager& config = ConfigManager::Get();
+        const f32 cap = config.Float("battle/flankCap", 0.85f);
+
+        auto measure = [&](const BattleSide& pressing, BattleSide& pressed)
+        {
+            const Cohort* anchor = world.FindCohort(pressed.cohort);
+            const Cohort* first = world.FindCohort(pressing.cohort);
+            if (!anchor || !first) return;
+
+            // Where the pressed host is already facing: towards whoever engaged it first.
+            const Vec2 front = (first->position - anchor->position).Normalized();
+            if (front.LengthSq() < 0.0001f) return;
+
+            f32 total = 0.0f;
+            f32 weight = 0.0f;
+            for (EntityId id : pressing.support)
+            {
+                const Cohort* host = world.FindCohort(id);
+                if (!host || host->IsEmpty()) continue;
+
+                const Vec2 bearing = (host->position - anchor->position).Normalized();
+                if (bearing.LengthSq() < 0.0001f) continue;
+
+                // 1 straight ahead, 0 straight behind. Half of one minus it is therefore
+                // nothing for a host beside the first, a half at right angles, and the
+                // whole of it for a host at the enemy's back - which is the rule asked for.
+                const f32 alignment = front.x * bearing.x + front.y * bearing.y;
+                const f32 round = Clamp01((1.0f - alignment) * 0.5f);
+
+                // A handful of men coming round the back is a fright; a second army coming
+                // round the back is the end of the battle. Weigh it by what it brings.
+                const f32 share = static_cast<f32>(world.CohortStrength(id));
+                total += round * share;
+                weight += share;
+            }
+            if (weight <= 0.0f) return;
+
+            // How much of the pressed side's own strength the encircling force amounts to,
+            // so that being taken in the rear by something small is not decisive.
+            const f32 held = static_cast<f32>(SideStrength(world, pressed));
+            const f32 mass = held > 0.0f ? std::min(1.0f, weight / held) : 1.0f;
+            pressed.flanked = std::min(cap, total / weight * mass);
+        };
+
+        measure(report.attacker, report.defender);
+        measure(report.defender, report.attacker);
+    }
+
     void BattleSystem::ResolveFieldBattles(World& world, f32 days)
     {
         ConfigManager& config = ConfigManager::Get();
@@ -316,10 +739,36 @@ namespace woc
             if (a->IsWithdrawing() || b->IsWithdrawing()) continue;       // one of them is pulling out
             if (Distance(a->position, b->position) > m_engagementRadius * 1.5f) continue;
 
-            a->inBattle = b->inBattle = true;
-            battle.elapsedDays += days;
             battle.position = (a->position + b->position) * 0.5f;
 
+            // Hosts that have lost their men, or that have walked off, are no longer in it.
+            auto prune = [&](BattleSide& side)
+            {
+                side.support.erase(std::remove_if(side.support.begin(), side.support.end(),
+                    [&](EntityId id)
+                    {
+                        const Cohort* host = world.FindCohort(id);
+                        return !host || host->IsEmpty() || host->IsWithdrawing() ||
+                               Distance(host->position, battle.position) >
+                                   m_engagementRadius * config.Float("battle/supportRadiusFactor", 2.2f);
+                    }), side.support.end());
+            };
+            prune(battle.attacker);
+            prune(battle.defender);
+
+            GatherSupport(world, battle);
+            MeasureFlanks(world, battle);
+
+            for (EntityId id : battle.attacker.Hosts())
+            {
+                if (Cohort* host = world.FindCohort(id)) host->inBattle = true;
+            }
+            for (EntityId id : battle.defender.Hosts())
+            {
+                if (Cohort* host = world.FindCohort(id)) host->inBattle = true;
+            }
+
+            battle.elapsedDays += days;
             battle.roundProgress += roundsPerDay * days;
             const i32 rounds = static_cast<i32>(battle.roundProgress);
             battle.roundProgress -= static_cast<f32>(rounds);
@@ -327,16 +776,42 @@ namespace woc
             if (rounds > 0) RunRounds(world, battle, rounds);
             if (battle.concluded)
             {
-                a->inBattle = false;
-                b->inBattle = false;
+                // A relief force that turns up mid-siege interrupts the siege; beating it
+                // off should put the besiegers back where they were, and not leave them
+                // standing outside the walls waiting for an order they already gave.
+                auto release = [&](const BattleSide& side)
+                {
+                    for (EntityId id : side.Hosts())
+                    {
+                        Cohort* host = world.FindCohort(id);
+                        if (!host) continue;
+                        host->inBattle = false;
+
+                        if (host->siegeTarget == kInvalidId) continue;
+                        const Settlement* wall = world.FindSettlement(host->siegeTarget);
+                        if (!wall || host->currentTask.type != TaskType::Idle ||
+                            Distance(host->position, wall->position) > 40.0f ||
+                            !world.MayAttackSettlement(host->clan, wall->id))
+                        {
+                            host->siegeTarget = kInvalidId;
+                            continue;
+                        }
+                        host->currentTask.Clear();
+                        host->currentTask.type = TaskType::Besiege;
+                        host->currentTask.destination = host->position;
+                        host->currentTask.targetSettlement = wall->id;
+                    }
+                };
+                release(battle.attacker);
+                release(battle.defender);
                 continue;
             }
             carried.push_back(battle);
         }
 
         // --- fresh contacts ----------------------------------------------------------------
-        // Each cohort fights at most one battle, which keeps a melee of many armies from
-        // resolving in an arbitrary order.
+        // Each cohort fights at most one battle: a host that is already in a line, on either
+        // side of it, is not available to start another one somewhere else.
         std::vector<EntityId> ids;
         ids.reserve(world.Cohorts().size());
         for (const auto& [id, cohort] : world.Cohorts()) ids.push_back(id);
@@ -346,7 +821,7 @@ namespace woc
         {
             for (const BattleReport& battle : carried)
             {
-                if (battle.attacker.cohort == id || battle.defender.cohort == id) return true;
+                if (battle.attacker.Includes(id) || battle.defender.Includes(id)) return true;
             }
             return false;
         };
@@ -385,6 +860,18 @@ namespace woc
                           " проти " + report.defender.name,
                           clan ? clan->color : Color::FromRGB(0xC9A227));
 
+                // Anyone already standing near enough goes straight into the line.
+                GatherSupport(world, report);
+                MeasureFlanks(world, report);
+                for (EntityId id : report.attacker.Hosts())
+                {
+                    if (Cohort* host = world.FindCohort(id)) host->inBattle = true;
+                }
+                for (EntityId id : report.defender.Hosts())
+                {
+                    if (Cohort* host = world.FindCohort(id)) host->inBattle = true;
+                }
+
                 report.roundProgress = roundsPerDay * days;
                 const i32 rounds = static_cast<i32>(report.roundProgress);
                 report.roundProgress -= static_cast<f32>(rounds);
@@ -392,7 +879,17 @@ namespace woc
                 if (rounds > 0) RunRounds(world, report, rounds);
 
                 if (!report.concluded) carried.push_back(report);
-                else { a->inBattle = false; b->inBattle = false; }
+                else
+                {
+                    for (EntityId id : report.attacker.Hosts())
+                    {
+                        if (Cohort* host = world.FindCohort(id)) host->inBattle = false;
+                    }
+                    for (EntityId id : report.defender.Hosts())
+                    {
+                        if (Cohort* host = world.FindCohort(id)) host->inBattle = false;
+                    }
+                }
                 break;
             }
         }
@@ -408,8 +905,24 @@ namespace woc
         const f32 moraleLoss = config.Float("battle/moraleLossPerCasualty", 0.9f);
         const f32 experienceGain = config.Float("battle/experiencePerRound", 0.004f);
         const f32 experienceCap = config.Float("battle/experienceCap", 1.0f);
+        const f32 flankMorale = config.Float("battle/flankMoralePerRound", 0.05f);
+        const f32 flankPower = config.Float("battle/flankPowerPenalty", 0.35f);
 
         Random& random = GlobalRandom();
+
+        // Every living host on a side, so the round can reach the whole line at once.
+        auto forEachUnit = [&world](const BattleSide& side, auto&& fn)
+        {
+            for (EntityId cohortId : side.Hosts())
+            {
+                Cohort* host = world.FindCohort(cohortId);
+                if (!host) continue;
+                for (EntityId unitId : host->units)
+                {
+                    if (Unit* unit = world.FindUnit(unitId)) fn(*host, *unit);
+                }
+            }
+        };
 
         for (i32 round = 0; round < rounds; ++round)
         {
@@ -417,8 +930,14 @@ namespace woc
             Cohort* b = world.FindCohort(report.defender.cohort);
             if (!a || !b || a->IsEmpty() || b->IsEmpty()) break;
 
-            const f32 powerA = EvaluatePower(world, a->id, b->id, a->position);
-            const f32 powerB = EvaluatePower(world, b->id, a->id, b->position);
+            f32 powerA = SidePower(world, report.attacker, report.defender);
+            f32 powerB = SidePower(world, report.defender, report.attacker);
+
+            // A line that has to face two ways is not fighting with all of itself. This is
+            // the part of being flanked that is felt in the blows rather than in the nerve.
+            powerA *= 1.0f - report.attacker.flanked * flankPower;
+            powerB *= 1.0f - report.defender.flanked * flankPower;
+
             report.attacker.power = powerA;
             report.defender.power = powerB;
             if (powerA <= 0.0f && powerB <= 0.0f) break;
@@ -431,15 +950,15 @@ namespace woc
             // spears in their hands take some toll simply by being there, so each side
             // deals at least a scratch proportional to how many of them are swinging.
             const f32 bite = config.Float("battle/minBitePerHead", 0.9f);
-            damageToA = std::max(damageToA, static_cast<f32>(world.CohortStrength(b->id)) * bite);
-            damageToB = std::max(damageToB, static_cast<f32>(world.CohortStrength(a->id)) * bite);
+            damageToA = std::max(damageToA, static_cast<f32>(SideStrength(world, report.defender)) * bite);
+            damageToB = std::max(damageToB, static_cast<f32>(SideStrength(world, report.attacker)) * bite);
 
             // Most of what a line of battle takes is men down, not men dead: a shield wall
             // wounds far more than it kills. The killing happens in the pursuit.
             const f32 killShare = config.Float("battle/meleeKillShare", 0.4f);
             u32 deadA = 0, deadB = 0, hurtA = 0, hurtB = 0;
-            ApplyDamage(world, *b, damageToB, deadB, hurtB, killShare);
-            ApplyDamage(world, *a, damageToA, deadA, hurtA, killShare);
+            SpreadDamage(world, report.defender, damageToB, deadB, hurtB, killShare);
+            SpreadDamage(world, report.attacker, damageToA, deadA, hurtA, killShare);
             report.attacker.losses += deadA;
             report.defender.losses += deadB;
             report.attacker.hurt += hurtA;
@@ -447,46 +966,54 @@ namespace woc
             const u32 lossesA = deadA + hurtA;
             const u32 lossesB = deadB + hurtB;
 
-            // Morale erodes with casualties; the side that breaks first loses the field.
-            auto shakeMorale = [&](Cohort& cohort, u32 losses, u32 startingStrength)
+            // Morale erodes with casualties, and faster still when the blows are coming
+            // from behind: it is being taken in the rear that actually breaks armies.
+            auto shakeMorale = [&](const BattleSide& side, u32 losses)
             {
-                if (startingStrength == 0) return;
-                const f32 fraction = static_cast<f32>(losses) / static_cast<f32>(startingStrength);
-                for (EntityId unitId : cohort.units)
+                const u32 startingStrength = side.startingStrength;
+                const f32 fraction = startingStrength == 0
+                    ? 0.0f
+                    : static_cast<f32>(losses) / static_cast<f32>(startingStrength);
+                const f32 drop = fraction * moraleLoss + side.flanked * flankMorale;
+                if (drop <= 0.0f) return;
+                forEachUnit(side, [&](Cohort&, Unit& unit)
                 {
-                    if (Unit* unit = world.FindUnit(unitId))
-                    {
-                        unit->morale = Clamp01(unit->morale - fraction * moraleLoss);
-                    }
-                }
+                    unit.morale = Clamp01(unit.morale - drop);
+                });
             };
-            shakeMorale(*a, lossesA, report.attacker.startingStrength);
-            shakeMorale(*b, lossesB, report.defender.startingStrength);
+            shakeMorale(report.attacker, lossesA);
+            shakeMorale(report.defender, lossesB);
 
-            a->experience = std::min(experienceCap, a->experience + experienceGain);
-            b->experience = std::min(experienceCap, b->experience + experienceGain);
+            // Every round of melee costs order, and everybody in the line learns from it.
+            const f32 shock = config.Float("battle/organisationPerRound", 0.06f);
+            for (const BattleSide* side : { &report.attacker, &report.defender })
+            {
+                for (EntityId id : side->Hosts())
+                {
+                    Cohort* host = world.FindCohort(id);
+                    if (!host) continue;
+                    host->experience = std::min(experienceCap, host->experience + experienceGain);
+                    host->organisation = Clamp01(host->organisation - shock);
+                }
+            }
 
-            // Every round of melee costs order on both sides.
-            const f32 shock = ConfigManager::Get().Float("battle/organisationPerRound", 0.06f);
-            a->organisation = Clamp01(a->organisation - shock);
-            b->organisation = Clamp01(b->organisation - shock);
-
-            auto averageMorale = [&world](const Cohort& cohort)
+            auto averageMorale = [&](const BattleSide& side)
             {
                 f32 total = 0.0f;
                 u32 count = 0;
-                for (EntityId unitId : cohort.units)
+                forEachUnit(side, [&](Cohort&, Unit& unit)
                 {
-                    const Unit* unit = world.FindUnit(unitId);
-                    if (!unit || unit->IsDestroyed()) continue;
-                    total += unit->morale;
+                    if (unit.IsDestroyed()) return;
+                    total += unit.morale;
                     ++count;
-                }
+                });
                 return count > 0 ? total / static_cast<f32>(count) : 0.0f;
             };
 
-            const f32 moraleA = averageMorale(*a);
-            const f32 moraleB = averageMorale(*b);
+            CullBrokenHosts(world, report);
+
+            const f32 moraleA = averageMorale(report.attacker);
+            const f32 moraleB = averageMorale(report.defender);
 
             if (moraleA < breakThreshold || moraleB < breakThreshold)
             {
@@ -496,43 +1023,54 @@ namespace woc
                 report.victor = attackerBroke ? b->clan : a->clan;
                 report.concluded = true;
 
-                // The broken side runs; the pursuit costs it more than the fighting did.
+                BattleSide& losingSide = attackerBroke ? report.attacker : report.defender;
+                BattleSide& winningSide = attackerBroke ? report.defender : report.attacker;
                 Cohort* loser = attackerBroke ? a : b;
                 Cohort* winner = attackerBroke ? b : a;
 
                 // The pursuit is where the dying is done - but a broken host is not an
                 // annihilated one. It runs, loses its order, and can be rallied.
                 u32 pursuitDead = 0, pursuitHurt = 0;
-                ApplyDamage(world, *loser,
-                            EvaluatePower(world, winner->id, loser->id, winner->position) *
-                            baseDamage * config.Float("battle/pursuitDamage", 1.5f),
-                            pursuitDead, pursuitHurt,
-                            config.Float("battle/pursuitKillShare", 0.7f));
-
-                BattleSide& losingSide = attackerBroke ? report.attacker : report.defender;
+                SpreadDamage(world, losingSide,
+                             SidePower(world, winningSide, losingSide) *
+                             baseDamage * config.Float("battle/pursuitDamage", 1.5f),
+                             pursuitDead, pursuitHurt,
+                             config.Float("battle/pursuitKillShare", 0.7f));
                 losingSide.losses += pursuitDead;
                 losingSide.hurt += pursuitHurt;
 
                 // A rearguard that turns and fights, and the horses that founder in the
                 // chase: running a broken army down is not free either.
                 u32 chaseDead = 0, chaseHurt = 0;
-                ApplyDamage(world, *winner,
-                            static_cast<f32>(world.CohortStrength(loser->id)) *
-                            config.Float("battle/pursuitCostPerHead", 0.5f),
-                            chaseDead, chaseHurt, config.Float("battle/meleeKillShare", 0.4f));
-
-                BattleSide& winningSide = attackerBroke ? report.defender : report.attacker;
+                SpreadDamage(world, winningSide,
+                             static_cast<f32>(SideStrength(world, losingSide)) *
+                             config.Float("battle/pursuitCostPerHead", 0.5f),
+                             chaseDead, chaseHurt, config.Float("battle/meleeKillShare", 0.4f));
                 winningSide.losses += chaseDead;
                 winningSide.hurt += chaseHurt;
 
-                const Vec2 away = (loser->position - winner->position).Normalized();
-                loser->position += away * config.Float("battle/routDistance", 60.0f);
-                loser->currentTask.Clear();
-                loser->organisation = Clamp01(loser->organisation *
-                                              config.Float("battle/routOrganisation", 0.35f));
-                loser->disengageDays = config.Float("battle/disengageDays", 3.0f);
-                loser->inBattle = false;
-                winner->inBattle = false;
+                // The whole beaten line gives way, not only the banner that started it.
+                const f32 routDistance = config.Float("battle/routDistance", 60.0f);
+                const f32 routOrganisation = config.Float("battle/routOrganisation", 0.35f);
+                const f32 disengage = config.Float("battle/disengageDays", 3.0f);
+                const std::vector<EntityId> breaking = losingSide.Hosts();
+                for (EntityId id : breaking)
+                {
+                    Cohort* host = world.FindCohort(id);
+                    if (!host) continue;
+                    host->currentTask.Clear();
+                    host->organisation = Clamp01(host->organisation * routOrganisation);
+                    host->disengageDays = disengage;
+                    host->inBattle = false;
+                    // Onto ground, and away from the man who beat them - or nowhere, and
+                    // then the field is where they stay.
+                    FallBack(world, *host, winner->position, routDistance);
+                }
+                for (EntityId id : winningSide.Hosts())
+                {
+                    if (Cohort* host = world.FindCohort(id)) host->inBattle = false;
+                }
+                (void)loser;
                 break;
             }
         }
@@ -557,19 +1095,22 @@ namespace woc
             auto exactToll = [&](BattleSide& side)
             {
                 if (side.losses + side.hurt > 0) return;
-                Cohort* host = world.FindCohort(side.cohort);
-                if (!host || host->IsEmpty()) return;
-
-                for (EntityId unitId : host->units)
+                for (EntityId cohortId : side.Hosts())
                 {
-                    Unit* unit = world.FindUnit(unitId);
-                    if (!unit || unit->characters.empty()) continue;
+                    Cohort* host = world.FindCohort(cohortId);
+                    if (!host || host->IsEmpty()) continue;
 
-                    const EntityId personId = unit->characters.back();
-                    unit->characters.pop_back();
-                    unit->wounded.push_back(personId);
-                    ++side.hurt;
-                    return;
+                    for (EntityId unitId : host->units)
+                    {
+                        Unit* unit = world.FindUnit(unitId);
+                        if (!unit || unit->characters.empty()) continue;
+
+                        const EntityId personId = unit->characters.back();
+                        unit->characters.pop_back();
+                        unit->wounded.push_back(personId);
+                        ++side.hurt;
+                        return;
+                    }
                 }
             };
             if (report.victor == report.attacker.clan) exactToll(report.attacker);
@@ -579,8 +1120,13 @@ namespace woc
             const std::string where = report.terrainName;
             auto toll = [](const BattleSide& side)
             {
-                return std::to_string(side.losses) + " полеглих, " +
-                       std::to_string(side.hurt) + " поранених";
+                std::string text = std::to_string(side.losses) + " полеглих, " +
+                                   std::to_string(side.hurt) + " поранених";
+                if (!side.support.empty())
+                {
+                    text += ", загонів: " + std::to_string(side.support.size() + 1);
+                }
+                return text;
             };
             world.Log("Битва при " + where + " (" +
                       std::to_string(static_cast<i32>(report.elapsedDays + 0.5f)) + " дн.): " +
@@ -777,14 +1323,47 @@ namespace woc
             previous->RemoveSettlement(settlementId);
         }
 
+        // The men who held the walls held them to the end. Whatever garrison was inside -
+        // the old lord's, or the villagers who had risen and were keeping the place for
+        // themselves - does not survive the storming and does not carry on sitting there
+        // under the new banner.
+        std::vector<EntityId> fallen;
+        for (const auto& [cohortId, cohort] : world.Cohorts())
+        {
+            if (cohort.garrisonOf != settlementId) continue;
+            if (cohort.clan == newOwner) continue;
+            fallen.push_back(cohortId);
+        }
+        for (EntityId cohortId : fallen)
+        {
+            const Cohort* garrison = world.FindCohort(cohortId);
+            const std::string name = garrison ? garrison->DisplayName() : std::string();
+            world.DestroyCohort(cohortId);
+            if (!name.empty())
+            {
+                world.Log(name + " полягла, боронячи " + settlement->name,
+                          Color::FromRGB(0xC05046));
+            }
+        }
+
         // The victors take what they can carry.
         const f32 loot = config.Float("battle/lootFraction", 0.35f);
         conqueror->resources.money += static_cast<f32>(settlement->population) * 0.15f * loot;
         conqueror->resources.food += static_cast<f32>(settlement->population) * 0.05f * loot;
 
+        // Where the country around it answers to nobody, the place is held by presence and
+        // by nothing else: should a realm's authority close over it later, it changes hands
+        // without a blow. Taken on one's own ground, or off an enemy inside his own borders,
+        // it is a possession like any other.
+        const EntityId ground = CoverageSystem::Get().OwnerAt(world, settlement->position);
+        settlement->heldByPresence = ground == kInvalidId;
+
         settlement->owner = newOwner;
         settlement->siegeProgress = 0.0f;
         settlement->besiegedBy = kInvalidId;
+        // A town takes a while to get used to a new lord, whoever he is.
+        settlement->newLordUntilDay = world.Time().TotalDays() +
+            ConfigManager::Get().Int("population/newLordDays", 240);
         settlement->loyalty = std::max(0.12f, settlement->loyalty * 0.4f);
         settlement->prosperity *= 1.0f - config.Float("battle/razeProsperityLoss", 0.6f) * 0.5f;
         settlement->population = std::max(30, static_cast<i32>(settlement->population * 0.88f));

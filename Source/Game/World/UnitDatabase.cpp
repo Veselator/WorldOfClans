@@ -94,6 +94,9 @@ namespace woc
                 data.range = entry["range"].AsFloat(1.0f);
                 data.recruitCost = entry["recruitCost"].AsFloat(20.0f);
                 data.upkeep = entry["upkeep"].AsFloat(0.15f);
+                data.trainDays = entry["trainDays"].AsFloat(60.0f);
+                data.raiseHours = entry["raiseHours"].AsFloat(
+                    doc.GetFloat("recruitment/raiseHours/" + data.roleId, 24.0f));
                 data.morale = entry["morale"].AsFloat(0.75f);
                 data.commandBonus = entry["commandBonus"].AsFloat(0.0f);
                 units.push_back(std::move(data));

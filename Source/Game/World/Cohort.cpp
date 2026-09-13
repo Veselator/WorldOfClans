@@ -1,4 +1,5 @@
 #include "Cohort.h"
+#include <algorithm>
 
 namespace woc
 {
@@ -12,6 +13,7 @@ namespace woc
         case TaskType::Attack:   return "Переслідує";
         case TaskType::Besiege:  return "Облягає";
         case TaskType::Raid:     return "Грабує";
+        case TaskType::Storm:    return "Палить табір";
         case TaskType::Patrol:   return "Дозор";
         }
         return "?";
@@ -32,6 +34,8 @@ namespace woc
         node["disengage"] = disengageDays;
         node["organisation"] = organisation;
         node["garrisonOf"] = EncodeId(garrisonOf);
+        if (homeCamp != kInvalidId) node["homeCamp"] = EncodeId(homeCamp);
+        if (siegeTarget != kInvalidId) node["siegeTarget"] = EncodeId(siegeTarget);
         node["units"] = EncodeIdList(units);
 
         Json task = Json::MakeObject();
@@ -40,7 +44,22 @@ namespace woc
         task["y"] = currentTask.destination.y;
         task["targetCohort"] = EncodeId(currentTask.targetCohort);
         task["targetSettlement"] = EncodeId(currentTask.targetSettlement);
+        // The road it is on, and how far along it: a host that is marching somewhere keeps
+        // marching there after a load or a resynchronisation, instead of stopping dead.
+        if (!currentTask.waypoints.empty())
+        {
+            Json path = Json::MakeArray();
+            for (const Vec2& point : currentTask.waypoints)
+            {
+                path.Push(point.x);
+                path.Push(point.y);
+            }
+            task["path"] = path;
+            task["step"] = static_cast<i64>(currentTask.waypointIndex);
+        }
+        task["progress"] = currentTask.progressDays;
         node["task"] = task;
+        if (inBattle) node["inBattle"] = true;
         return node;
     }
 
@@ -58,6 +77,8 @@ namespace woc
         cohort.disengageDays = node["disengage"].AsFloat(0.0f);
         cohort.organisation = node["organisation"].AsFloat(1.0f);
         cohort.garrisonOf = DecodeId(node["garrisonOf"]);
+        cohort.homeCamp = DecodeId(node["homeCamp"]);
+        cohort.siegeTarget = DecodeId(node["siegeTarget"]);
         cohort.units = DecodeIdList(node["units"]);
 
         const Json& task = node["task"];
@@ -65,6 +86,14 @@ namespace woc
         cohort.currentTask.destination = { task["x"].AsFloat(0.0f), task["y"].AsFloat(0.0f) };
         cohort.currentTask.targetCohort = DecodeId(task["targetCohort"]);
         cohort.currentTask.targetSettlement = DecodeId(task["targetSettlement"]);
+        const Json& path = task["path"];
+        for (size_t i = 0; i + 1 < path.Size(); i += 2)
+        {
+            cohort.currentTask.waypoints.push_back({ path[i].AsFloat(0.0f), path[i + 1].AsFloat(0.0f) });
+        }
+        cohort.currentTask.waypointIndex = static_cast<size_t>(std::max(0, task["step"].AsInt(0)));
+        cohort.currentTask.progressDays = task["progress"].AsFloat(0.0f);
+        cohort.inBattle = node["inBattle"].AsBool(false);
         return cohort;
     }
 }

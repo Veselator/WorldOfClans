@@ -4,10 +4,13 @@
 #include "../../Core/Singleton.h"
 #include "../World/ResourceData.h"
 
+#include <string>
+
 namespace woc
 {
     class World;
     class Clan;
+    class Settlement;
 
     /// A breakdown the interface can show: where the month's income came from and went.
     struct ClanBudget
@@ -33,6 +36,12 @@ namespace woc
 
         /// Monthly output of a single settlement, including its buildings.
         ResourceData SettlementOutput(World& world, EntityId settlementId) const;
+        /// The same sum for a settlement that need not be in the world - which is how the
+        /// interface asks "and without this building?" of a copy with the building taken out.
+        ResourceData SettlementOutput(const World& world, const Settlement& settlement) const;
+        /// What one standing building adds to its settlement's monthly output.
+        ResourceData BuildingContribution(const World& world, const Settlement& settlement,
+                                          const std::string& buildingId) const;
 
         /// What the clan owes each month for garrisons, castles and armies.
         ResourceData ClanUpkeep(World& world, EntityId clanId) const;

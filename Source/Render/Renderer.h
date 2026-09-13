@@ -77,6 +77,10 @@ namespace woc
         /// Realm tint and frontier lines can be switched off to read the bare land.
         void SetBordersVisible(bool visible) { m_bordersVisible = visible; }
         bool BordersVisible() const { return m_bordersVisible; }
+        /// Hard tile edges (the default, and what a map painted in pixels actually is) or a
+        /// softened frontier that reads as a drawn line rather than as a staircase.
+        void SetSmoothBorders(bool smooth) { m_smoothBorders = smooth; }
+        bool SmoothBorders() const { return m_smoothBorders; }
         /// How hard the frontier lines are drawn; influence mode wants a softer seam.
         void SetBorderStrength(f32 strength) { m_borderStrength = strength; }
         /// How strongly the thematic layer washes over the land. A political map is a hint;
@@ -96,6 +100,7 @@ namespace woc
         void UIRectOutline(const Rect& rect, const Color& color, f32 thickness = 1.0f);
         void UILine(const Vec2& from, const Vec2& to, const Color& color, f32 thickness = 1.0f);
         void UISprite(SpriteId sprite, const Rect& rect, const Color& tint);
+        void UIAtlas(const Vec4& uvRect, const Rect& rect, const Color& tint);
         /// Draws the minimap picture into a rectangle. The image itself is whatever was
         /// last handed to SetMinimapImage.
         void UIMinimap(const Rect& rect, const Color& tint);
@@ -117,6 +122,9 @@ namespace woc
 
         /// UV rectangle of an atlas tile, needed by callers that build instances themselves.
         Vec4 SpriteUV(SpriteId sprite) const;
+        /// UV rectangle of an arbitrary pixel rectangle of the sheet - for the small marks
+        /// that do not sit on the 16-pixel grid.
+        Vec4 AtlasUV(f32 x, f32 y, f32 width, f32 height) const;
 
     private:
         Renderer() = default;
@@ -251,6 +259,7 @@ namespace woc
         bool m_fogEnabled = false;
         Vec2 m_mapSize{ 0.0f, 0.0f };
         f32 m_borderStrength = 0.92f;
+        bool m_smoothBorders = false;
         bool m_terrainTexturesReady = false;
 
         std::vector<SpriteInstance> m_sprites;
@@ -259,6 +268,7 @@ namespace woc
         std::vector<Rect> m_clipStack;
 
         std::vector<Vec4> m_atlasUVs;
+        Vec2 m_atlasSize{ 1.0f, 1.0f };
         Color m_clearColor{ 0.02f, 0.03f, 0.05f, 1.0f };
         f32 m_uiScale = 1.0f;
         f32 m_deltaTime = 0.0f;

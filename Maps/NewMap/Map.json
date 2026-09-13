@@ -1,0 +1,15 @@
+{
+  "description": "Тестовий острів: чорноземні рівнини посередині, пагорби й два гірські пасма, річки до узбережжя. Добрий для партії на 4-6 держав.",
+  "layers": {
+    "height": "HeightMap.png",
+    "terrain": "Terrain.png",
+    "trees": "Trees.png"
+  },
+  "name": "Нова карта",
+  "seed": 317367955,
+  "size": {
+    "height": 1080,
+    "width": 1946
+  },
+  "tilePixels": 4
+}

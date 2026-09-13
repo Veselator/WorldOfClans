@@ -51,6 +51,26 @@ namespace woc
         return false;
     }
 
+    f32 RoadSystem::GroundEffort(const MapData& map, const Coord& tile)
+    {
+        if (!map.InBounds(tile)) return 1.0f;
+
+        const Tile& t = map.At(tile);
+        const TerrainInfo& info = TerrainDatabase::Get().At(t.terrain);
+        ConfigManager& config = ConfigManager::Get();
+
+        // A track already laid is the cheapest ground there is: the cuttings are dug, the
+        // stumps are out, and the work is widening and metalling rather than road-making.
+        if (t.road > 0) return config.Float("roads/existingRoadEffort", 0.18f);
+
+        // Hills and highland are what a road is actually spent on. `moveCost` is the same
+        // figure a marching column feels, so the two agree about what hard country is.
+        f32 effort = 1.0f + std::max(0.0f, info.moveCost - 1.0f) *
+                            config.Float("roads/slopeEffort", 1.8f);
+        effort *= 1.0f + t.forest * config.Float("roads/forestEffort", 0.55f);
+        return std::clamp(effort, 0.2f, config.Float("roads/maxEffort", 3.2f));
+    }
+
     f32 RoadSystem::BuildCost(const MapData& map, const Coord& tile)
     {
         if (!map.InBounds(tile)) return -1.0f;
@@ -61,15 +81,16 @@ namespace woc
         if (info.water)
         {
             // A crossing is possible but dear, so the route finds the narrows by itself.
+            // Over a bridge that is already standing it is merely a stretch of road.
+            if (t.bridged) return ConfigManager::Get().Float("roads/existingRoadEffort", 0.18f);
             return ConfigManager::Get().Float("roads/bridgeRouteCost", 9.0f);
         }
         if (!info.passable) return -1.0f;   // nobody cuts a road through a cliff
 
-        // Rock and slope cost labour; standing timber has to be cleared first.
-        f32 cost = 1.0f + (info.moveCost - 1.0f) * 0.8f;
-        cost *= 1.0f + t.forest * 0.5f;
-        if (t.road > 0) cost *= 0.2f;       // reuse an existing stretch wherever possible
-        return std::max(0.15f, cost);
+        // The route follows the same effort the price is worked out from, so a road that
+        // looks cheap on the map is cheap in the treasury: A* prefers an existing track and
+        // level ground, and goes round a ridge rather than over it.
+        return std::max(0.15f, GroundEffort(map, tile));
     }
 
     // =========================================================================================
@@ -103,7 +124,11 @@ namespace woc
         const f32 metresPerUnit = config.Float("roads/metresPerUnit", 12.0f);
         const f32 tileMetres = static_cast<f32>(map.TilePixels()) * metresPerUnit;
 
-        // Measure the route: every step is a tile's worth of metres, diagonals a little more.
+        // Measure the route, and weigh every metre of it by the ground it crosses: a metre
+        // over a ridge is several metres' worth of work, a metre along an existing track is
+        // a fraction of one. `metres` stays the honest length, so the figure the player is
+        // shown is still the length of his road; `effort` is what he pays for.
+        f32 effortMetres = 0.0f;
         for (size_t i = 1; i < path.tiles.size(); ++i)
         {
             const Coord& previous = path.tiles[i - 1];
@@ -116,20 +141,25 @@ namespace woc
             {
                 plan.bridgeMetres += metres;
             }
+            else
+            {
+                effortMetres += metres * GroundEffort(map, tile);
+            }
         }
 
         // Price it. Both rates are per conceptual metre; a bridge simply costs far more of
         // everything than the same metre of packed earth would.
-        const f32 road = plan.metres - plan.bridgeMetres;
-        plan.cost.money = road * config.Float("roads/moneyPerMetre", 0.06f) +
+        plan.cost.money = effortMetres * config.Float("roads/moneyPerMetre", 0.06f) +
                           plan.bridgeMetres * config.Float("roads/bridgeMoneyPerMetre", 1.1f);
-        plan.cost.stone = road * config.Float("roads/stonePerMetre", 0.025f) +
+        plan.cost.stone = effortMetres * config.Float("roads/stonePerMetre", 0.025f) +
                           plan.bridgeMetres * config.Float("roads/bridgeStonePerMetre", 0.4f);
-        plan.cost.wood = road * config.Float("roads/woodPerMetre", 0.012f) +
+        plan.cost.wood = effortMetres * config.Float("roads/woodPerMetre", 0.012f) +
                          plan.bridgeMetres * config.Float("roads/bridgeWoodPerMetre", 0.6f);
 
+        // And the same weighting sets the pace: a road over the hills is not only dearer,
+        // it takes a season longer.
         plan.days = std::max(1, static_cast<i32>(
-            plan.metres / 1000.0f * config.Float("roads/daysPerKilometre", 7.0f) +
+            effortMetres / 1000.0f * config.Float("roads/daysPerKilometre", 7.0f) +
             plan.bridgeMetres / 1000.0f * config.Float("roads/bridgeDaysPerKilometre", 90.0f)));
 
         plan.tiles = path.tiles;
@@ -220,6 +250,52 @@ namespace woc
             CoverageSystem::Get().MarkDirty();
             it = m_projects.erase(it);
         }
+    }
+
+    Json RoadSystem::ToJson() const
+    {
+        Json root = Json::MakeObject();
+        Json list = Json::MakeArray();
+        for (const RoadProject& project : m_projects)
+        {
+            Json node = Json::MakeObject();
+            node["clan"] = static_cast<i64>(project.clan);
+            Json tiles = Json::MakeArray();
+            for (const Coord& tile : project.tiles)
+            {
+                tiles.Push(static_cast<i64>(tile.x));
+                tiles.Push(static_cast<i64>(tile.y));
+            }
+            node["tiles"] = tiles;
+            node["daysTotal"] = project.daysTotal;
+            node["daysDone"] = project.daysDone;
+            node["stamped"] = static_cast<i64>(project.stamped);
+            node["label"] = project.label;
+            list.Push(node);
+        }
+        root["projects"] = list;
+        return root;
+    }
+
+    void RoadSystem::FromJson(const Json& root)
+    {
+        m_projects.clear();
+        for (const Json& node : root["projects"].AsArray())
+        {
+            RoadProject project;
+            project.clan = static_cast<EntityId>(node["clan"].AsNumber(0.0));
+            const Json& tiles = node["tiles"];
+            for (size_t i = 0; i + 1 < tiles.Size(); i += 2)
+            {
+                project.tiles.push_back({ tiles[i].AsInt(0), tiles[i + 1].AsInt(0) });
+            }
+            project.daysTotal = node["daysTotal"].AsFloat(1.0f);
+            project.daysDone = node["daysDone"].AsFloat(0.0f);
+            project.stamped = static_cast<size_t>(std::max(0, node["stamped"].AsInt(0)));
+            project.label = node["label"].AsString();
+            m_projects.push_back(std::move(project));
+        }
+        m_dirty = true;
     }
 
     void RoadSystem::Reset()

@@ -8,6 +8,38 @@
 
 namespace woc
 {
+    bool Window::SetClipboardText(const std::string& text)
+    {
+        // The clipboard is UTF-16, so the string is widened first. A lobby code is five
+        // ASCII characters, but nothing here assumes that.
+        const int wide = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+        if (wide <= 0) return false;
+
+        HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, static_cast<size_t>(wide) * sizeof(wchar_t));
+        if (!handle) return false;
+
+        wchar_t* buffer = static_cast<wchar_t*>(GlobalLock(handle));
+        if (!buffer)
+        {
+            GlobalFree(handle);
+            return false;
+        }
+        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, buffer, wide);
+        GlobalUnlock(handle);
+
+        if (!OpenClipboard(nullptr))
+        {
+            GlobalFree(handle);
+            return false;
+        }
+        EmptyClipboard();
+        // The clipboard owns the block from here; freeing it would be a double free.
+        const bool placed = SetClipboardData(CF_UNICODETEXT, handle) != nullptr;
+        CloseClipboard();
+        if (!placed) GlobalFree(handle);
+        return placed;
+    }
+
     namespace
     {
         constexpr const wchar_t* kClassName = L"WorldOfClansWindow";

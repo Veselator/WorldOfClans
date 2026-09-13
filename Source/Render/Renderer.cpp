@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 
@@ -212,6 +213,7 @@ namespace woc
                             VK_IMAGE_ASPECT_COLOR_BIT);
         m_atlasImage.UploadPixels(atlas.pixels.data(), atlas.pixels.size());
         m_atlasSet = CreateTextureSet(m_atlasImage.View(), m_nearestSampler);
+        m_atlasSize = { static_cast<f32>(atlas.width), static_cast<f32>(atlas.height) };
 
         // Tile rectangles are derived from the sheet layout described in the config.
         const u32 tileSize = static_cast<u32>(config.Int("sprites/tileSize", 16));
@@ -741,6 +743,12 @@ namespace woc
         return index < m_atlasUVs.size() ? m_atlasUVs[index] : Vec4{ 0, 0, 1, 1 };
     }
 
+    Vec4 Renderer::AtlasUV(f32 x, f32 y, f32 width, f32 height) const
+    {
+        return { x / m_atlasSize.x, y / m_atlasSize.y,
+                 (x + width) / m_atlasSize.x, (y + height) / m_atlasSize.y };
+    }
+
     void Renderer::DrawSprite(SpriteId sprite, const Vec2& mapPosition, f32 height, f32 worldSize,
                               const Color& tint, f32 anchor, f32 flash)
     {
@@ -859,6 +867,11 @@ namespace woc
         range.count += 6;
     }
 
+    void Renderer::UIAtlas(const Vec4& uvRect, const Rect& rect, const Color& tint)
+    {
+        PushUIQuad(rect, uvRect, tint, UIDrawMode::Sprite);
+    }
+
     void Renderer::UISprite(SpriteId sprite, const Rect& rect, const Color& tint)
     {
         PushUIQuad(rect, SpriteUV(sprite), tint, UIDrawMode::Sprite);
@@ -957,11 +970,16 @@ namespace woc
 
             if (glyph->width > 0.0f && glyph->height > 0.0f)
             {
-                const Rect quad{
-                    penX + glyph->bearingX * scale,
-                    penY - glyph->bearingY * scale,
-                    glyph->width * scale,
-                    glyph->height * scale
+                // Snapped to whole pixels. The atlas is sampled smoothly, so a quad that
+                // lands on a half pixel is blended with the blank padding around the glyph:
+                // for most letters that only softens the edge, but a hyphen in Consolas is
+                // one pixel tall and one such blend wiped it out completely - which is why
+                // every "-" button in the interface looked empty while "+" did not.
+                Rect quad{
+                    std::round(penX + glyph->bearingX * scale),
+                    std::round(penY - glyph->bearingY * scale),
+                    std::max(1.0f, std::round(glyph->width * scale)),
+                    std::max(1.0f, std::round(glyph->height * scale))
                 };
                 PushUIQuad(quad, { glyph->uvMin.x, glyph->uvMin.y, glyph->uvMax.x, glyph->uvMax.y },
                            color, UIDrawMode::Glyph);
@@ -1074,7 +1092,13 @@ namespace woc
         TerrainPush push{};
         push.forestRect = SpriteUV(SpriteId::Forest);
         push.fieldRect = SpriteUV(SpriteId::Field);
-        push.settings = { m_forestTiling, m_fieldTiling, m_borderWidth, m_ownerTint };
+        // A drawn border is not a tile edge and should not be the width of one: softening
+        // the line also spreads it, so the smooth mode is given a wider kernel of its own.
+        // The sign carries which mode the shader is in.
+        const f32 smoothScale = ConfigManager::Get().Float("render/smoothBorderScale", 2.6f);
+        push.settings = { m_forestTiling, m_fieldTiling,
+                          m_smoothBorders ? -m_borderWidth * smoothScale : m_borderWidth,
+                          m_ownerTint };
         push.texel = {
             m_ownerMask.Width() > 0 ? 1.0f / m_ownerMask.Width() : 0.0f,
             m_ownerMask.Height() > 0 ? 1.0f / m_ownerMask.Height() : 0.0f,

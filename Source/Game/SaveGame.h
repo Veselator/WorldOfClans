@@ -5,6 +5,7 @@
 #pragma once
 
 #include "../Core/Types.h"
+#include "../Core/Json.h"
 
 namespace woc
 {
@@ -27,6 +28,13 @@ namespace woc
         static bool Save(const World& world, const std::string& slotName, const std::string& mapFolder);
         /// Restores a save and rebuilds the player seats. Returns the map folder on success.
         static bool Load(World& world, const std::string& fileName, std::string& outMapFolder);
+
+        /// The whole world in memory, for a machine that has fallen out of step.
+        static Json Snapshot(const World& world);
+        /// Puts that world in place of this one - on the host and on the clients alike, so
+        /// that afterwards all of them are exactly equal. `localPeer` picks this machine's
+        /// realm; the map itself is left as it is.
+        static void Restore(World& world, const Json& snapshot, const std::string& localPeer);
 
         static std::vector<SaveSlot> List();
         static bool Delete(const std::string& fileName);

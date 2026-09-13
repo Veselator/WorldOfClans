@@ -60,6 +60,9 @@ namespace woc
         MusicMood Mood() const { return m_mood; }
 
         // --- levels ---------------------------------------------------------------------
+        /// The whole mix at once, on the mastering voice: music and effects keep their balance.
+        void SetMasterVolume(f32 volume);
+        f32 MasterVolume() const { return m_masterVolume; }
         void SetMusicVolume(f32 volume);
         void SetSfxVolume(f32 volume);
         f32 MusicVolume() const { return m_musicVolume; }
@@ -109,6 +112,7 @@ namespace woc
         std::string m_decodingTrack;
 
         MusicMood m_mood = MusicMood::Silent;
+        f32 m_masterVolume = 1.0f;
         f32 m_musicVolume = 0.45f;
         f32 m_sfxVolume = 0.8f;
         f32 m_pitchMin = 0.92f;

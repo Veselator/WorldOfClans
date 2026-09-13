@@ -4,12 +4,18 @@
 #include "../Audio/AudioSystem.h"
 #include "../Core/Config.h"
 #include "../Core/Log.h"
+#include "../Game/GameCommands.h"
+#include "../Net/NetSession.h"
+#include "../Game/Systems/BanditSystem.h"
 #include "../Game/Systems/BattleSystem.h"
 #include "../Game/Factories/NamePool.h"
 #include "../Game/Factories/SettlementFactory.h"
 #include "../Game/Systems/CoverageSystem.h"
 #include "../Game/Systems/DiplomacySystem.h"
 #include "../Game/Systems/FogSystem.h"
+#include "../Game/Systems/ForestrySystem.h"
+#include "../Game/Systems/RoadSystem.h"
+#include "../Core/Profiler.h"
 #include "../Game/Systems/MarketSystem.h"
 #include "../Game/Systems/MovementSystem.h"
 #include "../Game/Systems/PoliticsSystem.h"
@@ -25,6 +31,9 @@
 #include "../UI/UI.h"
 
 #include <algorithm>
+#include <array>
+#include <functional>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -85,6 +94,15 @@ namespace woc
             const PartySettings settings = PartySettings::FromJson(scenes.Data("party"));
             m_mapFolder = settings.mapFolder;
             ready = WorldGenerator::Generate(m_world, settings);
+
+            // A party on fresh ground plays on a folder that did not exist a moment ago.
+            // Everything downstream - the save, the minimap, the map objects - names the
+            // map by that folder, so the scene has to learn what it turned out to be.
+            if (ready && !m_world.MapInfo().folder.empty())
+            {
+                m_mapFolder = m_world.MapInfo().folder;
+                scenes.SetPayload("map", m_mapFolder);
+            }
             if (ready) m_saveName = m_world.HumanState() ? m_world.HumanState()->name : std::string("Гра");
         }
 
@@ -96,8 +114,132 @@ namespace woc
         }
 
         LoadMinimapBase();
+        m_lastAutosaveDay = m_world.Time().TotalDays();
 
         FocusOnCapital();
+    }
+
+    bool GameScene::IsNetworkGuest() const
+    {
+        return NetSession::Get().Role() == NetRole::Client;
+    }
+
+    bool GameScene::Order(const Json& command)
+    {
+        return GameCommands::Issue(m_world, command);
+    }
+
+    bool GameScene::OrdersDeferred() const
+    {
+        return NetSession::Get().Active();
+    }
+
+    void GameScene::UpdateNetwork(f32 deltaTime)
+    {
+        // Who does what in a party, in one place:
+        //  - every machine runs the whole simulation, identically (Simulation::Step);
+        //  - every machine draws, selects, scouts, remembers and plays sound on its own
+        //    (Simulation::UpdatePresentation and the whole of this scene);
+        //  - the host alone decides at which tick each order takes effect and how fast time
+        //    runs, and every machine follows those decisions to the tick.
+        NetSession& session = NetSession::Get();
+        Simulation& simulation = Simulation::Get();
+        if (!session.Active())
+        {
+            simulation.SetLockstep(false);
+            return;
+        }
+        simulation.SetLockstep(true);
+
+        const u64 checksumEvery = static_cast<u64>(std::max(1,
+            ConfigManager::Get().Int("net/checksumEveryTicks", 24)));
+
+        if (session.IsHost())
+        {
+            // A machine out of step - or every machine, after the host changed - is given the
+            // host's world, and the host takes the same document itself so that from here on
+            // all of them are identical, including in what the document leaves out.
+            if (session.ConsumeResyncRequest())
+            {
+                WOC_PROFILE("net.resync");
+                // The host restores from the very text the clients receive, not from the
+                // document in memory, so that nothing can differ between the two - not even the
+                // last bit of a number.
+                const std::string text = SaveGame::Snapshot(m_world).Dump(0);
+                SaveGame::Restore(m_world, Json::Parse(text), session.LocalPeerId());
+                session.SendResync(text);
+            }
+
+            // Orders take effect at the tick the world is at now, before it moves on.
+            std::vector<NetSession::TurnOrder> orders;
+            session.TakeOrders(orders);
+            const u64 now = simulation.CurrentTick();
+            for (NetSession::TurnOrder& order : orders)
+            {
+                order.tick = now;
+                // Likewise for orders: the host carries out the order as it will read on the
+                // other side of the wire.
+                order.command = Json::Parse(order.command.Dump(0));
+                GameCommands::Execute(m_world, order.command, order.peer);
+            }
+
+            std::vector<std::pair<u64, u64>> checksums;
+            const i32 limit = std::max(1, static_cast<i32>(4.0f / simulation.TickDays()));
+            const i32 due = simulation.TakeDueTicks(deltaTime, limit);
+            for (i32 i = 0; i < due; ++i)
+            {
+                simulation.Step(m_world);
+                const u64 tick = simulation.CurrentTick();
+                if (tick % checksumEvery == 0) checksums.emplace_back(tick, simulation.Checksum(m_world));
+            }
+
+            // Every frame, whether or not anything happened: the clients may only go as far as
+            // this says, so the sooner it arrives the smoother they run.
+            session.SendTurn(simulation.CurrentTick(), simulation.SpeedIndex(), orders, checksums);
+            return;
+        }
+
+        // --- a client: follow the host tick by tick ------------------------------------------
+        Json world;
+        if (session.ConsumeResync(world))
+        {
+            WOC_PROFILE("net.resync");
+            SaveGame::Restore(m_world, world, session.LocalPeerId());
+            m_desyncReported = false;
+            m_status = "Світ синхронізовано з хостом";
+            m_statusTimer = 3.0f;
+        }
+
+        simulation.SetSpeedIndex(session.HostSpeed());
+
+        // As many ticks as the host has confirmed - at most a few days' worth in one frame, so
+        // a machine that fell far behind catches up over several frames instead of freezing.
+        const i32 limit = std::max(8, static_cast<i32>(4.0f / simulation.TickDays()));
+        std::vector<NetSession::TurnOrder> due;
+        for (i32 steps = 0; steps <= limit; ++steps)
+        {
+            const u64 tick = simulation.CurrentTick();
+            session.TakeOrdersAt(tick, due);
+            for (const NetSession::TurnOrder& order : due)
+            {
+                GameCommands::Execute(m_world, order.command, order.peer);
+            }
+            if (tick >= session.ConfirmedTick() || steps == limit) break;
+
+            simulation.Step(m_world);
+
+            u64 expected = 0;
+            const u64 reached = simulation.CurrentTick();
+            if (!m_desyncReported && session.ChecksumAt(reached, expected) &&
+                expected != simulation.Checksum(m_world))
+            {
+                WOC_LOG_WARN("Lockstep: desynchronised at tick ", reached, " - asking the host for the world");
+                m_desyncReported = true;
+                session.RequestResync();
+                m_status = "Розсинхронізація з хостом — отримуємо світ...";
+                m_statusTimer = 4.0f;
+            }
+        }
     }
 
     void GameScene::UpdateMusicMood()
@@ -190,18 +332,31 @@ namespace woc
         }
 
         UpdateMusicMood();
+        UpdateAutosave();
+        UpdateNetwork(deltaTime);
         UpdateHotkeys();
         // Repainted on its own clock, and outside Render(): the upload waits on the device,
         // which is not something to do in the middle of recording a frame.
         UpdateMinimap(deltaTime);
-        // The world stands still behind a modal, and once the party is decided. An embassy
-        // waiting on an answer counts: the player should not be asked to decide a treaty
-        // while armies keep marching behind the dialog.
-        if (HasOpenDialog()) return;
+        const bool dialog = HasOpenDialog();
+        if (!dialog)
+        {
+            UpdateCamera(deltaTime);
+            UpdateSelection();
+        }
 
-        UpdateCamera(deltaTime);
-        UpdateSelection();
+        if (OrdersDeferred())
+        {
+            // A shared party cannot stop for one player's dialog: the world is everybody's.
+            // UpdateNetwork has already advanced it; this machine only draws.
+            Simulation::Get().UpdatePresentation(m_world, deltaTime);
+            return;
+        }
 
+        // Alone, the world stands still behind a modal, and once the party is decided. An
+        // embassy waiting on an answer counts: the player should not be asked to decide a
+        // treaty while armies keep marching behind the dialog.
+        if (dialog) return;
         Simulation::Get().Update(m_world, deltaTime);
     }
 
@@ -259,9 +414,16 @@ namespace woc
 
         Simulation& simulation = Simulation::Get();
 
-        if (m_input.WasKeyPressed(Key::Space)) simulation.TogglePause();
-        if (m_input.WasKeyPressed(Key::Plus)) simulation.SetSpeedIndex(simulation.SpeedIndex() + 1);
-        if (m_input.WasKeyPressed(Key::Minus)) simulation.SetSpeedIndex(simulation.SpeedIndex() - 1);
+        // In a party the clock is the host's. A guest pressing space would only desynchronise
+        // his own screen from everybody else's, so the keys simply do nothing for him.
+        const bool ownsClock = NetSession::Get().MayControlSpeed();
+
+        if (ownsClock)
+        {
+            if (m_input.WasKeyPressed(Key::Space)) simulation.TogglePause();
+            if (m_input.WasKeyPressed(Key::Plus)) simulation.SetSpeedIndex(simulation.SpeedIndex() + 1);
+            if (m_input.WasKeyPressed(Key::Minus)) simulation.SetSpeedIndex(simulation.SpeedIndex() - 1);
+        }
 
         // A bare digit is the clock - 0 pauses, 1 to 5 pick a tempo. Holding shift turns the
         // same row into the four panels, so neither has to give the other its keys up.
@@ -270,7 +432,7 @@ namespace woc
         {
             if (!m_input.WasKeyPressed(static_cast<Key>(static_cast<u16>(Key::Num0) + i))) continue;
 
-            if (!shift) simulation.SetSpeedIndex(i);
+            if (!shift) { if (ownsClock) simulation.SetSpeedIndex(i); }
             else if (i >= 1 && i <= 4) m_panelMode = static_cast<PanelMode>(i - 1);
         }
 
@@ -281,7 +443,9 @@ namespace woc
             const Settlement* seat = m_world.FindSettlement(m_selected);
             const Clan* owner = seat ? m_world.FindClan(seat->owner) : nullptr;
             const State* human = m_world.HumanState();
-            if (owner && human && owner->state == human->id)
+            // Shift and the same five letters raise companies on the recruiting page, so the
+            // bare letters turn pages everywhere, that page included.
+            if (owner && human && owner->state == human->id && !m_input.IsKeyDown(Key::Shift) && !m_ui.WantsKeyboard())
             {
                 struct Shortcut { Key key; SettlementTab tab; };
                 static const Shortcut kPages[] = {
@@ -346,11 +510,12 @@ namespace woc
         {
             // Escape backs out one step at a time and only ever opens the menu; leaving a
             // running game is a deliberate choice made in that menu, never a stray keypress.
-            if (DiplomacySystem::Get().HasOffer()) DiplomacySystem::Get().DeclineOffer(m_world);
+            if (PendingOffer()) AnswerOffer(false);
             else if (m_namingOpen) { m_namingOpen = false; m_ui.RestartTransition("game.naming"); }
             else if (m_saveDialogOpen) m_saveDialogOpen = false;
             else if (m_pauseMenuOpen) m_pauseMenuOpen = false;
             else if (m_placingSettlement) m_placingSettlement = false;
+            else if (m_placingForest) m_placingForest = false;
             // A settlement page is a screen inside a screen: back out of it before letting
             // go of the settlement itself.
             else if (m_selectionKind == SelectionKind::Settlement &&
@@ -395,8 +560,17 @@ namespace woc
         const Camera& camera = m_renderer.GetCamera();
         const MapData& map = m_world.Map();
 
+        // The town is drawn at world size and at a size of its own besides - a great city
+        // is a good deal bigger than a hamlet - so a single flat radius made the collider
+        // smaller than the picture and left the player stabbing at his own capital. The
+        // target is measured from the icon that is actually on the screen instead.
+        ConfigManager& config = ConfigManager::Get();
+        const f32 size = config.Float("render/spriteScale/settlement", 26.0f);
+        const f32 tierGrowth = config.Float("render/spriteScale/tierGrowth", 0.14f);
+        const f32 pad = config.Float("render/settlementPickPad", 1.2f);
+
         EntityId best = kInvalidId;
-        f32 bestDistance = screenRadius * screenRadius;
+        f32 bestScore = 1e9f;
 
         for (const auto& [id, settlement] : m_world.Settlements())
         {
@@ -404,10 +578,22 @@ namespace woc
             // as far as the player is concerned.
             if (!FogSystem::Get().IsKnown(m_world, settlement.position)) continue;
 
+            const f32 growth = 1.0f + tierGrowth * static_cast<f32>(settlement.TierIndex());
+            const f32 scale = growth * (settlement.kind == SettlementKind::Village
+                ? size * 0.8f
+                : size * (settlement.kind == SettlementKind::City ? 1.15f : 1.0f));
+
+            const f32 half = std::max(screenRadius, scale * camera.Zoom() * 0.5f * pad);
+
             const Vec2 screen = camera.MapToScreen(settlement.position,
                                                    map.WorldHeightAtMap(settlement.position));
-            const f32 distance = DistanceSq(screen, screenPoint);
-            if (distance < bestDistance) { bestDistance = distance; best = id; }
+            if (std::abs(screen.x - screenPoint.x) > half) continue;
+            if (std::abs(screen.y - screenPoint.y) > half) continue;
+
+            // Scored relative to its own reach, so a hamlet standing beside a city can
+            // still be picked when the pointer is nearer to it than to the city.
+            const f32 score = DistanceSq(screen, screenPoint) / (half * half);
+            if (score < bestScore) { bestScore = score; best = id; }
         }
         return best;
     }
@@ -523,10 +709,85 @@ namespace woc
         return best;
     }
 
+    EntityId GameScene::PickBanditCamp(const Vec2& screenPoint, f32 screenRadius) const
+    {
+        const Camera& camera = m_renderer.GetCamera();
+        const MapData& map = m_world.Map();
+
+        const f32 half = std::max(screenRadius,
+            ConfigManager::Get().Float("render/spriteScale/banditCamp", 22.0f) * camera.Zoom() * 0.5f);
+
+        EntityId best = kInvalidId;
+        f32 bestDistance = 1e9f;
+
+        for (const BanditCamp& camp : m_world.BanditCamps())
+        {
+            // A camp is only there once somebody of yours has seen it - which is rather the
+            // point of a camp in the woods.
+            if (!FogSystem::Get().IsVisible(m_world, camp.position)) continue;
+
+            const Vec2 screen = camera.MapToScreen(camp.position, map.WorldHeightAtMap(camp.position));
+            if (std::abs(screen.x - screenPoint.x) > half) continue;
+            if (std::abs(screen.y - screenPoint.y) > half) continue;
+
+            const f32 distance = DistanceSq(screen, screenPoint);
+            if (distance < bestDistance) { bestDistance = distance; best = camp.id; }
+        }
+        return best;
+    }
+
+    void GameScene::SelectInBox(const Rect& box, bool additive)
+    {
+        const Camera& camera = m_renderer.GetCamera();
+        const MapData& map = m_world.Map();
+        const State* human = m_world.HumanState();
+        if (!human) return;
+
+        std::vector<EntityId> caught;
+        for (const auto& [id, cohort] : m_world.Cohorts())
+        {
+            // Only one's own, and only those actually on the map: a garrison is commanded
+            // from the walls it sits in, and a band drawn over a town should not scoop it up.
+            if (cohort.garrisonOf != kInvalidId || cohort.IsEmpty()) continue;
+            const Clan* clan = m_world.FindClan(cohort.clan);
+            if (!clan || clan->state != human->id) continue;
+            if (!FogSystem::Get().IsVisible(m_world, cohort.position)) continue;
+
+            const Vec2 screen = camera.MapToScreen(cohort.position,
+                                                   map.WorldHeightAtMap(cohort.position));
+            if (!box.Contains(screen)) continue;
+            caught.push_back(id);
+        }
+
+        if (caught.empty())
+        {
+            // An empty band clears the selection, the same as a click on bare ground does -
+            // unless the player was adding to one, in which case it changes nothing.
+            if (additive) return;
+            m_selectionKind = SelectionKind::None;
+            m_selected = kInvalidId;
+            m_selectedCohorts.clear();
+            return;
+        }
+
+        if (!additive) m_selectedCohorts.clear();
+        for (EntityId id : caught)
+        {
+            if (!IsSelected(id)) m_selectedCohorts.push_back(id);
+        }
+
+        m_selectionKind = SelectionKind::Cohort;
+        m_selected = m_selectedCohorts.front();
+        m_selectedUnit = kInvalidId;
+        m_selectedCharacter = kInvalidId;
+        m_panelMode = PanelMode::Selection;
+
+        m_status = "Виділено загонів: " + std::to_string(m_selectedCohorts.size());
+        m_statusTimer = 2.5f;
+    }
+
     void GameScene::UpdateSelection()
     {
-        Camera& camera = m_renderer.GetCamera();
-
         const Vec2 screen = m_input.MousePosition();
         const Vec2 mapPosition = ScreenToTerrain(screen);
         const f32 pickRadius = ConfigManager::Get().Float("render/pickRadius", 20.0f);
@@ -537,6 +798,85 @@ namespace woc
         m_hoveredMine = (m_ui.WantsMouse() || m_hoveredCohort != kInvalidId ||
                          m_hoveredSettlement != kInvalidId)
             ? kInvalidId : PickMine(screen, pickRadius);
+        m_hoveredCamp = (m_ui.WantsMouse() || m_hoveredCohort != kInvalidId ||
+                         m_hoveredSettlement != kInvalidId || m_hoveredMine != kInvalidId)
+            ? kInvalidId : PickBanditCamp(screen, pickRadius);
+
+        // How far the pointer has to travel before a click becomes a band. Below it the
+        // gesture is a click, so a shaky hand still selects what it is pointing at.
+        const f32 dragThreshold = ConfigManager::Get().Float("render/dragThreshold", 6.0f);
+
+        // The band is resolved wherever the button comes up, including over a panel: a drag
+        // that ends on the sidebar is still a drag, and leaving it unresolved would leave a
+        // rectangle drawn on the screen for ever.
+        if (m_boxSelecting && m_input.WasMouseReleased(MouseButton::Left))
+        {
+            m_boxSelecting = false;
+
+            const f32 travel = Distance(screen, m_boxAnchor);
+            const bool additive = m_input.IsKeyDown(Key::Shift) || m_input.IsKeyDown(Key::Control);
+
+            if (travel >= dragThreshold)
+            {
+                const Rect box{ std::min(m_boxAnchor.x, screen.x), std::min(m_boxAnchor.y, screen.y),
+                                std::abs(screen.x - m_boxAnchor.x), std::abs(screen.y - m_boxAnchor.y) };
+                SelectInBox(box, additive);
+                return;
+            }
+
+            if (m_ui.WantsMouse()) return;
+
+            // A plain click: whatever is under the pointer, and nothing if that is grass.
+            if (m_hoveredCohort != kInvalidId)
+            {
+                SelectCohort(m_hoveredCohort, additive);
+            }
+            else if (m_hoveredSettlement != kInvalidId)
+            {
+                m_selectionKind = SelectionKind::Settlement;
+                m_selected = m_hoveredSettlement;
+                m_selectedCohorts.clear();
+                m_settlementTab = SettlementTab::Overview;
+                m_panelMode = PanelMode::Selection;
+
+                // Shift on a foreign town is the short way to its court: the diplomacy
+                // page opens with that realm already chosen, instead of the player hunting
+                // for the name in a list of twelve.
+                if (m_input.IsKeyDown(Key::Shift))
+                {
+                    const Settlement* settlement = m_world.FindSettlement(m_hoveredSettlement);
+                    const State* self = m_world.HumanState();
+                    const Clan* owner = settlement ? m_world.FindClan(settlement->owner) : nullptr;
+                    const State* court = owner ? m_world.FindState(owner->state) : nullptr;
+                    if (self && court && court->id != self->id && !court->eliminated && !court->outlaw)
+                    {
+                        m_diplomacyTarget = court->id;
+                        m_panelMode = PanelMode::Diplomacy;
+                    }
+                }
+            }
+            else if (m_hoveredMine != kInvalidId)
+            {
+                m_selectionKind = SelectionKind::Mine;
+                m_selected = m_hoveredMine;
+                m_selectedCohorts.clear();
+                m_panelMode = PanelMode::Selection;
+            }
+            else if (m_hoveredCamp != kInvalidId)
+            {
+                m_selectionKind = SelectionKind::BanditCamp;
+                m_selected = m_hoveredCamp;
+                m_selectedCohorts.clear();
+                m_panelMode = PanelMode::Selection;
+            }
+            else if (!additive)
+            {
+                m_selectionKind = SelectionKind::None;
+                m_selected = kInvalidId;
+                m_selectedCohorts.clear();
+            }
+            return;
+        }
 
         if (m_ui.WantsMouse()) return;
 
@@ -570,45 +910,50 @@ namespace woc
                 // player types over it only when he has something better in mind.
                 const Clan* clan = m_world.HumanClan();
                 m_pendingName = clan
-                    ? NamePool::Get().SettlementName(clan->raceId, GlobalRandom())
+                    ? NamePool::Get().SettlementName(clan->raceId, m_localRandom)
                     : std::string();
                 m_namingOpen = true;
                 m_ui.RestartTransition("game.naming");
                 return;
             }
 
-            // Shift or Ctrl bands armies together; a plain click starts over.
-            const bool additive = m_input.IsKeyDown(Key::Shift) || m_input.IsKeyDown(Key::Control);
+            if (m_placingForest)
+            {
+                m_placingForest = false;
 
-            if (m_hoveredCohort != kInvalidId)
-            {
-                SelectCohort(m_hoveredCohort, additive);
+                Clan* clan = m_world.HumanClan();
+                if (!clan) return;
+
+                // The plan is costed here only to say something useful when the spot is a
+                // bad one; the planting itself is an order like any other.
+                const PlantingPlan plan = ForestrySystem::Get().PlanPlanting(m_world, clan->id, mapPosition);
+                if (!plan.valid)
+                {
+                    m_status = plan.problem;
+                    m_statusTimer = 3.5f;
+                    return;
+                }
+
+                Order(GameCommands::PlantForest(mapPosition));
+                m_status = "Селяни беруться саджати ліс";
+                m_statusTimer = 3.0f;
+                return;
             }
-            else if (m_hoveredSettlement != kInvalidId)
-            {
-                m_selectionKind = SelectionKind::Settlement;
-                m_selected = m_hoveredSettlement;
-                m_selectedCohorts.clear();
-                m_settlementTab = SettlementTab::Overview;
-                m_panelMode = PanelMode::Selection;
-            }
-            else if (m_hoveredMine != kInvalidId)
-            {
-                m_selectionKind = SelectionKind::Mine;
-                m_selected = m_hoveredMine;
-                m_selectedCohorts.clear();
-                m_panelMode = PanelMode::Selection;
-            }
-            else if (!additive)
-            {
-                m_selectionKind = SelectionKind::None;
-                m_selected = kInvalidId;
-                m_selectedCohorts.clear();
-            }
+
+            // Everything else is a band until the button comes up and says otherwise.
+            m_boxSelecting = true;
+            m_boxAnchor = screen;
         }
 
         if (m_input.WasMousePressed(MouseButton::Right))
         {
+            // The right button also calls off whatever the left one was being asked to place.
+            if (m_placingSettlement || m_placingForest)
+            {
+                m_placingSettlement = false;
+                m_placingForest = false;
+                return;
+            }
             IssueOrder(mapPosition);
         }
     }
@@ -622,7 +967,6 @@ namespace woc
         std::vector<Cohort*> armies = CommandableSelection();
         if (armies.empty()) return;
 
-        MovementSystem& movement = MovementSystem::Get();
         const Vec2 screen = m_input.MousePosition();
         const bool wantsRaid = m_input.IsKeyDown(Key::Shift);
 
@@ -634,14 +978,29 @@ namespace woc
             m_statusTimer = 3.0f;
         };
 
-        // Several armies cannot stand on one point, so a band spreads into a small ring
-        // around the destination instead of piling onto a single tile.
-        auto spread = [&](const Vec2& centre, size_t index)
+        // Several armies cannot stand on one point. A ring around the destination put half
+        // of them behind it, marching past the place they were sent to; a line drawn across
+        // the direction of the march arrives abreast, which is both what a host actually
+        // does and what the player meant by dragging a box over five banners.
+        Vec2 muster;
+        for (const Cohort* army : armies) muster = muster + army->position;
+        if (!armies.empty()) muster = muster * (1.0f / static_cast<f32>(armies.size()));
+
+        const f32 spacing = ConfigManager::Get().Float("movement/formationSpacing", 34.0f);
+
+        auto spread = [&, muster, spacing](const Vec2& centre, size_t index)
         {
             if (armies.size() < 2) return centre;
-            const f32 angle = static_cast<f32>(index) / static_cast<f32>(armies.size()) * 6.2831853f;
-            const f32 radius = 26.0f + static_cast<f32>(armies.size()) * 4.0f;
-            return Vec2{ centre.x + std::cos(angle) * radius, centre.y + std::sin(angle) * radius };
+
+            Vec2 forward = centre - muster;
+            if (forward.LengthSq() < 1.0f) forward = { 0.0f, -1.0f };
+            forward = forward.Normalized();
+
+            // Abreast of the march: the front rank of a column that has just deployed.
+            const Vec2 across{ -forward.y, forward.x };
+            const f32 offset = (static_cast<f32>(index) -
+                                (static_cast<f32>(armies.size()) - 1.0f) * 0.5f) * spacing;
+            return Vec2{ centre.x + across.x * offset, centre.y + across.y * offset };
         };
 
         const EntityId targetSettlement = PickSettlement(screen, 26.0f);
@@ -677,7 +1036,8 @@ namespace woc
                         ? spread(settlement->position, i)
                         : settlement->position;
 
-                    if (movement.OrderTask(m_world, cohort->id, task, destination, targetSettlement))
+                    if (Order(GameCommands::Task(cohort->id, task, destination, targetSettlement)) ||
+                        OrdersDeferred())
                     {
                         ++ordered;
                         if (i == 0) m_status = std::string(Task::TypeName(task)) + ": " + settlement->name;
@@ -698,6 +1058,29 @@ namespace woc
             }
         }
 
+        // A camp is stormed, not besieged: there is nothing to starve out and nothing to
+        // capture, only tents to pull down and a hoard under one of them.
+        const EntityId targetCamp = PickBanditCamp(screen, 26.0f);
+        if (targetCamp != kInvalidId)
+        {
+            const BanditCamp* camp = m_world.FindBanditCamp(targetCamp);
+            if (camp)
+            {
+                i32 ordered = 0;
+                for (size_t i = 0; i < armies.size(); ++i)
+                {
+                    if (Order(GameCommands::Task(armies[i]->id, TaskType::Storm,
+                                                 spread(camp->position, i), targetCamp)) ||
+                        OrdersDeferred())
+                    {
+                        ++ordered;
+                    }
+                }
+                report(ordered > 0 ? "Спалити табір" : "Туди не пройти");
+                return;
+            }
+        }
+
         const EntityId targetCohort = PickCohort(screen, 22.0f);
         if (targetCohort != kInvalidId && !IsSelected(targetCohort))
         {
@@ -706,8 +1089,8 @@ namespace woc
             {
                 for (Cohort* cohort : armies)
                 {
-                    movement.OrderTask(m_world, cohort->id, TaskType::Attack, enemy->position,
-                                       kInvalidId, targetCohort);
+                    Order(GameCommands::Task(cohort->id, TaskType::Attack, enemy->position,
+                                             kInvalidId, targetCohort));
                 }
                 report("Перехоплення: " + enemy->DisplayName());
                 return;
@@ -717,7 +1100,11 @@ namespace woc
         i32 marching = 0;
         for (size_t i = 0; i < armies.size(); ++i)
         {
-            if (movement.OrderMove(m_world, armies[i]->id, spread(mapPosition, i))) ++marching;
+            if (Order(GameCommands::Task(armies[i]->id, TaskType::Move, spread(mapPosition, i))) ||
+                OrdersDeferred())
+            {
+                ++marching;
+            }
         }
         if (marching == 0) report("Туди не пройти");
         else report("Похід");
@@ -733,12 +1120,13 @@ namespace woc
         // that are drawn first. Without this the player could still press buttons on the
         // side panel through the dimmed backdrop.
         if (m_namingOpen)          m_ui.SetModalRegion(NamingDialogRect());
-        else if (DiplomacySystem::Get().HasOffer()) m_ui.SetModalRegion(OfferDialogRect());
+        else if (PendingOffer())   m_ui.SetModalRegion(OfferDialogRect());
         else if (m_saveDialogOpen) m_ui.SetModalRegion(SaveDialogRect());
         else if (m_pauseMenuOpen)  m_ui.SetModalRegion(PauseMenuRect());
         else if (m_gameOver)       m_ui.SetModalRegion(GameOverRect());
 
         DrawWorld();
+        DrawSelectionBox();
 
         DrawTopBar();
         DrawSidePanel();
@@ -830,7 +1218,26 @@ namespace woc
     bool GameScene::HasOpenDialog() const
     {
         return m_namingOpen || m_saveDialogOpen || m_pauseMenuOpen || m_gameOver ||
-               DiplomacySystem::Get().HasOffer();
+               PendingOffer() != nullptr;
+    }
+
+    const DiplomaticOffer* GameScene::PendingOffer() const
+    {
+        const State* us = const_cast<World&>(m_world).HumanState();
+        if (!us) return nullptr;
+        const DiplomaticOffer* offer = DiplomacySystem::Get().OfferFor(us->id);
+        // An answer already sent is not asked again while it is on its way to a tick.
+        if (offer && m_answeredOfferDay == offer->dayMade && m_answeredOfferFrom == offer->from) return nullptr;
+        return offer;
+    }
+
+    void GameScene::AnswerOffer(bool accept)
+    {
+        const DiplomaticOffer* offer = PendingOffer();
+        if (!offer) return;
+        m_answeredOfferDay = offer->dayMade;
+        m_answeredOfferFrom = offer->from;
+        Order(GameCommands::AnswerOffer(accept));
     }
 
     void GameScene::DrawHeralds(f32 deltaTime)
@@ -881,13 +1288,14 @@ namespace woc
     void GameScene::DrawOfferDialog()
     {
         DiplomacySystem& diplomacy = DiplomacySystem::Get();
-        if (!diplomacy.HasOffer()) return;
+        const DiplomaticOffer* pending = PendingOffer();
+        if (!pending) return;
 
-        const DiplomaticOffer& offer = diplomacy.FrontOffer();
+        const DiplomaticOffer offer = *pending;
         const State* asker = m_world.FindState(offer.from);
         if (!asker)
         {
-            diplomacy.DeclineOffer(m_world);
+            AnswerOffer(false);
             return;
         }
 
@@ -922,13 +1330,13 @@ namespace woc
 
         if (m_ui.Button({ panel.x + margin, buttonY, buttonWidth, 34.0f }, "Погодитись"))
         {
-            diplomacy.AcceptOffer(m_world);
+            AnswerOffer(true);
             m_status = "Угоду укладено";
             m_statusTimer = 3.0f;
         }
         if (m_ui.Button({ panel.x + margin + buttonWidth + 12.0f, buttonY, buttonWidth, 34.0f }, "Відмовити"))
         {
-            diplomacy.DeclineOffer(m_world);
+            AnswerOffer(false);
             m_status = "Посольству відмовлено";
             m_statusTimer = 3.0f;
         }
@@ -985,6 +1393,25 @@ namespace woc
 
         if (button("У головне меню")) SceneManager::Get().Request(SceneId::MainMenu);
         if (button("Вихід із гри")) SceneManager::Get().RequestQuit();
+    }
+
+    void GameScene::UpdateAutosave()
+    {
+        const i32 interval = Settings::Get().autosaveDays;
+        if (interval <= 0) return;
+
+        const i32 today = m_world.Time().TotalDays();
+        if (today - m_lastAutosaveDay < interval) return;
+
+        m_lastAutosaveDay = today;
+
+        // Its own slot, always the same one: an autosave is a safety net, not a history.
+        const std::string slot = (m_saveName.empty() ? std::string("Гра") : m_saveName) + " (авто)";
+        if (SaveGame::Save(m_world, slot, m_mapFolder))
+        {
+            m_status = "Автозбереження: " + slot;
+            m_statusTimer = 2.5f;
+        }
     }
 
     void GameScene::PerformSave(const std::string& slotName)
@@ -1060,6 +1487,7 @@ namespace woc
     void GameScene::DrawWorld()
     {
         DrawMines();
+        DrawBanditCamps();
         DrawSettlements();
         DrawCohorts();
         DrawSelectionMarkers();
@@ -1069,6 +1497,76 @@ namespace woc
         DrawCohortBars();
         DrawSettlementLabels();
         DrawDiplomaticFlares(m_renderer.DeltaTime());
+        DrawRevoltMarks(m_renderer.DeltaTime());
+    }
+
+    void GameScene::DrawSelectionBox()
+    {
+        if (!m_boxSelecting) return;
+
+        const Vec2 mouse = m_input.MousePosition();
+        const Rect box{ std::min(m_boxAnchor.x, mouse.x), std::min(m_boxAnchor.y, mouse.y),
+                        std::abs(mouse.x - m_boxAnchor.x), std::abs(mouse.y - m_boxAnchor.y) };
+
+        // Below the threshold the gesture is still a click; drawing a two-pixel rectangle
+        // under the cursor would only be noise.
+        if (box.w < 3.0f && box.h < 3.0f) return;
+
+        m_renderer.UIRect(box, m_theme.selection.WithAlpha(0.14f));
+        m_renderer.UIRectOutline(box, m_theme.selection.WithAlpha(0.85f), 1.0f);
+    }
+
+    void GameScene::DrawRevoltMarks(f32 deltaTime)
+    {
+        std::vector<RevoltMark>& marks = m_world.RevoltMarks();
+        if (marks.empty()) return;
+
+        const MapData& map = m_world.Map();
+        const f32 size = ConfigManager::Get().Float("render/revoltMarkSize", 44.0f);
+        const f32 overshoot = ConfigManager::Get().Float("render/revoltMarkOvershoot", 1.25f);
+
+        for (RevoltMark& mark : marks)
+        {
+            mark.life -= deltaTime;
+            if (mark.life <= 0.0f) continue;
+
+            const f32 age = 1.0f - mark.life / std::max(0.01f, mark.duration);
+
+            // Out of nothing, past its own size, and back: a damped spring, written out
+            // rather than integrated, so it lands the same way every time. The peak is the
+            // configured overshoot and it settles on one.
+            const f32 rise = Clamp01(age / 0.45f);
+            f32 scale;
+            if (rise < 1.0f)
+            {
+                // A single overshooting ease: 0 to the peak and down to 1 by the time the
+                // rise is over.
+                const f32 t = rise;
+                const f32 c = (overshoot - 1.0f) * 2.70158f + 1.70158f;
+                scale = 1.0f + c * std::pow(t - 1.0f, 3.0f) + (c + 1.0f) * std::pow(t - 1.0f, 2.0f);
+            }
+            else
+            {
+                scale = 1.0f;
+            }
+
+            // It hangs for a moment at full size and then fades out where it stands.
+            const f32 alpha = age < 0.72f ? 1.0f : 1.0f - (age - 0.72f) / 0.28f;
+
+            const f32 height = map.WorldHeightAtMap(mark.position);
+            SpriteInstance fist;
+            fist.worldPosition = Camera::ToWorld(mark.position, height);
+            fist.size = { size * scale, size * scale };
+            fist.uvRect = m_renderer.SpriteUV(SpriteId::Revolt);
+            fist.color = Color(1.0f, 0.88f, 0.64f, Clamp01(alpha));
+            // Well above the village it belongs to, and in front of everything there.
+            fist.params = { -0.35f, -4.0f, 0.0f, 0.0f };
+            m_renderer.DrawSpriteRaw(fist);
+        }
+
+        marks.erase(std::remove_if(marks.begin(), marks.end(),
+                                   [](const RevoltMark& mark) { return mark.life <= 0.0f; }),
+                    marks.end());
     }
 
     void GameScene::DrawDiplomaticFlares(f32 deltaTime)
@@ -1152,16 +1650,53 @@ namespace woc
                 ? 0.35f + 0.35f * std::sin(m_pulse * 6.0f)
                 : 0.0f;
 
+            // Scaffolding: a site is drawn small and half-there, and grows into the picture
+            // as the work is done, so the map says at a glance what is finished and what is
+            // still a building yard.
+            f32 alpha = 1.0f;
+            f32 build = 1.0f;
+            if (settlement.UnderConstruction())
+            {
+                const f32 progress = Clamp01(settlement.FoundingProgress());
+                build = 0.55f + progress * 0.45f;
+                alpha = 0.45f + progress * 0.35f + 0.08f * std::sin(m_pulse * 3.0f);
+            }
+
             // Centred on the map position: the icon, the selection ring and the click
             // target then all sit on exactly the same point. The negative depth bias keeps
             // the town in front of any army standing on it, which matters during a siege.
             SpriteInstance instance;
             instance.worldPosition = Camera::ToWorld(settlement.position, height);
-            instance.size = { scale, scale };
+            instance.size = { scale * build, scale * build };
             instance.uvRect = m_renderer.SpriteUV(settlement.Sprite());
-            instance.color = tint;
+            // Mirrored by swapping the left and right edges of the picture; the walls laid
+            // over it copy this instance and so turn with it.
+            if (settlement.mirrored) std::swap(instance.uvRect.x, instance.uvRect.z);
+            instance.color = tint.WithAlpha(Clamp01(alpha));
             instance.params = { 0.5f, -1.0f, flash, 0.0f };
             m_renderer.DrawSpriteRaw(instance);
+
+            // Walls are drawn over the town rather than instead of it: a wall is a thing
+            // added to a place, and a player looking for which of his towns are defended
+            // should be able to see it from the map without opening a single panel. The
+            // sprite is authored to sit inside its own 16x16 cell exactly where the town
+            // sits in its own, so the two are drawn at the same size and the same anchor
+            // and line up by construction - lifting it only pushed it off the walls.
+            const bool stone = settlement.HasBuilding("stoneWall");
+            if (settlement.kind != SettlementKind::Castle &&
+                (stone || settlement.HasBuilding("palisade")))
+            {
+                SpriteInstance wall = instance;
+                wall.uvRect = m_renderer.SpriteUV(SpriteId::Walls);
+                if (settlement.mirrored) std::swap(wall.uvRect.x, wall.uvRect.z);
+                // Timber takes the lord's colours; masonry is masonry and stands pale.
+                wall.color = (stone ? Color::FromRGB(0xD8D8D8)
+                                    : LerpColor(tint, Color::FromRGB(0x8a6a3a), 0.55f))
+                             .WithAlpha(Clamp01(alpha));
+                // A hair in front of the town, and nowhere else different.
+                wall.params.y = -1.5f;
+                m_renderer.DrawSpriteRaw(wall);
+            }
 
             // A town with troops in it wears their race as a small badge on its lower right,
             // so you can read a garrison off the map without opening anything.
@@ -1219,6 +1754,7 @@ namespace woc
             instance.worldPosition = Camera::ToWorld(seen.position, map.WorldHeightAtMap(seen.position));
             instance.size = { scale, scale };
             instance.uvRect = m_renderer.SpriteUV(seen.sprite);
+            if (seen.mirrored) std::swap(instance.uvRect.x, instance.uvRect.z);
             instance.color = seen.color.WithAlpha(dim);
             instance.params = { 0.5f, -1.0f, 0.0f, 0.0f };
             m_renderer.DrawSpriteRaw(instance);
@@ -1261,11 +1797,18 @@ namespace woc
 
             const f32 height = map.WorldHeightAtMap(drawPosition);
             const f32 flash = cohort.inBattle ? 0.4f + 0.4f * std::sin(m_pulse * 10.0f) : 0.0f;
-            m_renderer.DrawSprite(SpriteId::Cohort, drawPosition, height, size,
-                                ClanColor(cohort.clan), 0.5f, flash);
+
+            // Robbers carry no banner. They get a mark of their own, in the one colour every
+            // band on the map shares, so that "these are nobody's men" reads at a glance.
+            const bool outlaw = BanditSystem::IsOutlaw(m_world, cohort.clan);
+            m_renderer.DrawSprite(outlaw ? SpriteId::BanditBand : SpriteId::Cohort,
+                                  drawPosition, height, size,
+                                  ClanColor(cohort.clan), 0.5f, flash);
 
             // Who is marching sits in the upper half of the banner; how many of them is
             // written underneath it by DrawCohortLabels, inside the same square.
+            // Robbers wear no banner but they are still somebody's people, and a player
+            // deciding whether to ride out wants to know whose.
             const Clan* clan = m_world.FindClan(cohort.clan);
             if (clan)
             {
@@ -1287,7 +1830,102 @@ namespace woc
                 marker.params = { 0.5f - lift, -1.0f, flash, 0.0f };
                 m_renderer.DrawSpriteRaw(marker);
             }
+
+            // What the host is made of, as a row of small marks standing on top of the
+            // banner: one per kind of company in it, in the owner's colour. The row is sized
+            // so that all five kinds side by side are exactly as wide as the banner, and every
+            // mark keeps the same pixel size, so a lone sword is not blown up to a horse.
+            {
+                std::array<bool, static_cast<size_t>(UnitRole::Count)> present{};
+                for (EntityId unitId : cohort.units)
+                {
+                    if (const Unit* unit = m_world.FindUnit(unitId))
+                    {
+                        present[std::min(static_cast<size_t>(unit->role), present.size() - 1)] = true;
+                    }
+                }
+
+                // The order the player reads them in: foot, bow, horse, horse-bow, lord.
+                static constexpr UnitRole kOrder[] = { UnitRole::Swordsman, UnitRole::Archer, UnitRole::Cavalry,
+                                                       UnitRole::HorseArcher, UnitRole::Aristocrat };
+
+                ConfigManager& config = ConfigManager::Get();
+                const f32 gap = config.Float("sprites/unitIconGap", 1.5f);
+                const f32 lift = config.Float("sprites/unitIconLift", 1.5f);
+
+                f32 allWidth = 0.0f;
+                f32 tallest = 0.0f;
+                for (UnitRole role : kOrder)
+                {
+                    const Vec4& px = UnitIconPixels(role);
+                    allWidth += px.z;
+                    tallest = std::max(tallest, px.w);
+                }
+                allWidth += gap * static_cast<f32>(std::size(kOrder) - 1);
+                const f32 pixel = allWidth > 0.0f ? size / allWidth : 0.0f;
+
+                f32 rowWidth = 0.0f;
+                i32 count = 0;
+                for (UnitRole role : kOrder)
+                {
+                    if (!present[static_cast<size_t>(role)]) continue;
+                    rowWidth += UnitIconPixels(role).z;
+                    ++count;
+                }
+                if (count > 0 && pixel > 0.0f)
+                {
+                    rowWidth += gap * static_cast<f32>(count - 1);
+
+                    // Bottom of the row sits a little above the top edge of the banner.
+                    const f32 rowBottom = size * 0.5f + lift * pixel;
+                    f32 cursor = -rowWidth * pixel * 0.5f;
+                    const Color tint = ClanColor(cohort.clan);
+
+                    for (UnitRole role : kOrder)
+                    {
+                        if (!present[static_cast<size_t>(role)]) continue;
+                        const Vec4& px = UnitIconPixels(role);
+                        const f32 w = px.z * pixel;
+                        const f32 h = px.w * pixel;
+
+                        SpriteInstance mark;
+                        mark.worldPosition = Camera::ToWorld(drawPosition, height);
+                        mark.size = { w, h };
+                        mark.uvRect = m_renderer.AtlasUV(px.x, px.y, px.z, px.w);
+                        mark.color = tint;
+                        // Centred vertically inside a row as tall as the tallest mark.
+                        const f32 centre = rowBottom + tallest * pixel * 0.5f;
+                        // anchor a puts the sprite's vertical span at [-a*h, (1-a)*h].
+                        const f32 anchor = 0.5f - centre / std::max(0.001f, h);
+                        mark.params = { anchor, -1.2f, flash, cursor + w * 0.5f };
+                        m_renderer.DrawSpriteRaw(mark);
+
+                        cursor += w + gap * pixel;
+                    }
+                }
+            }
         }
+    }
+
+    const Vec4& GameScene::UnitIconPixels(UnitRole role) const
+    {
+        if (!m_unitIconsLoaded)
+        {
+            const Json& icons = ConfigManager::Get().Game()["sprites"]["unitIcons"];
+            for (size_t i = 0; i < m_unitIcons.size(); ++i)
+            {
+                const Json& entry = icons[UnitDatabase::RoleId(static_cast<UnitRole>(i))];
+                const auto& values = entry.AsArray();
+                if (values.size() >= 4)
+                {
+                    m_unitIcons[i] = { values[0].AsFloat(0.0f), values[1].AsFloat(0.0f),
+                                       values[2].AsFloat(0.0f), values[3].AsFloat(0.0f) };
+                }
+            }
+            m_unitIconsLoaded = true;
+        }
+        const size_t index = std::min(static_cast<size_t>(role), m_unitIcons.size() - 1);
+        return m_unitIcons[index];
     }
 
     void GameScene::DrawCohortLabels()
@@ -1391,6 +2029,51 @@ namespace woc
         }
     }
 
+    void GameScene::DrawBanditCamps()
+    {
+        const MapData& map = m_world.Map();
+        const Camera& camera = m_renderer.GetCamera();
+        ConfigManager& config = ConfigManager::Get();
+
+        const f32 size = config.Float("render/spriteScale/banditCamp", 22.0f);
+        const Color outlaw = Color::FromRGB(0x474747);
+
+        FogSystem& fog = FogSystem::Get();
+        for (const BanditCamp& camp : m_world.BanditCamps())
+        {
+            if (!fog.IsKnown(m_world, camp.position)) continue;
+
+            // A camp under assault shows it: the tents shake and the mark pulses.
+            const f32 hurt = 1.0f - camp.Health();
+            const f32 flash = hurt > 0.01f ? 0.25f + 0.35f * std::sin(m_pulse * 7.0f) : 0.0f;
+
+            Vec2 position = camp.position;
+            if (hurt > 0.01f)
+            {
+                const f32 shake = config.Float("render/battleShake", 1.6f) * hurt;
+                position.x += std::sin(m_pulse * 23.0f) * shake;
+            }
+
+            const f32 height = map.WorldHeightAtMap(position);
+            m_renderer.DrawSprite(SpriteId::BanditCamp, position, height, size,
+                                  // Lightened a shade from the banner colour: tents in a wood
+                                  // at this size would otherwise read as a hole in the map.
+                                  LerpColor(outlaw, Color(1.0f, 1.0f, 1.0f, 1.0f), 0.35f),
+                                  0.5f, flash);
+
+            // How much of it is still standing, as a thin bar under the tents.
+            if (hurt > 0.01f && camera.Zoom() >= config.Float("render/cohortBarMinZoom", 0.8f))
+            {
+                const Vec2 screen = camera.MapToScreen(position, height);
+                const f32 width = size * camera.Zoom() * 0.9f;
+                const Rect track{ screen.x - width * 0.5f, screen.y + size * camera.Zoom() * 0.5f + 3.0f,
+                                  width, 3.0f };
+                m_renderer.UIRect(track, m_theme.shadow.WithAlpha(0.7f));
+                m_renderer.UIRect({ track.x, track.y, track.w * camp.Health(), track.h }, m_theme.negative);
+            }
+        }
+    }
+
     void GameScene::DrawSettlementLabels()
     {
         FogSystem& fog = FogSystem::Get();
@@ -1483,8 +2166,38 @@ namespace woc
             const f32 phase = std::fmod(m_pulse * ConfigManager::Get().Float("render/placePulseSpeed", 1.1f), 1.0f);
             const f32 alpha = phase < 0.5f ? phase * 2.0f : (1.0f - phase) * 2.0f;
 
-            const f32 size = ConfigManager::Get().Float("render/placeRingSize", 56.0f);
-            ring(site, size, allowed ? m_theme.positive : m_theme.negative, alpha);
+            // The town itself, as it would stand: its own picture, at the size a new
+            // holding of that kind is drawn, in the lord's colours - breathing in and out
+            // so it reads as a proposal and not as a building. Where it may not go, the same
+            // picture turns red rather than the cursor changing into something else.
+            const Clan* lord = m_world.HumanClan();
+            const f32 size = ConfigManager::Get().Float("render/spriteScale/settlement", 26.0f);
+            const f32 scale = m_placingKind == SettlementKind::Village ? size * 0.8f
+                            : size * (m_placingKind == SettlementKind::City ? 1.15f : 1.0f);
+
+            const f32 lowest = ConfigManager::Get().Float("render/placeGhostAlphaMin", 0.3f);
+            const f32 highest = ConfigManager::Get().Float("render/placeGhostAlphaMax", 0.85f);
+            const Color tint = allowed ? (lord ? lord->color : m_theme.positive)
+                                       : Color::FromRGB(0xD0463C);
+
+            SpriteInstance ghost;
+            ghost.worldPosition = Camera::ToWorld(site, m_world.Map().WorldHeightAtMap(site));
+            ghost.size = { scale, scale };
+            ghost.uvRect = m_renderer.SpriteUV(SettlementDatabase::Get().Kind(m_placingKind).sprite);
+            ghost.color = tint.WithAlpha(lowest + (highest - lowest) * alpha);
+            ghost.params = { 0.5f, -1.5f, 0.0f, 0.0f };
+            m_renderer.DrawSpriteRaw(ghost);
+        }
+
+        // A wood is sited the same way a town is, except that the ring is the size of the
+        // stand itself, so the player can see exactly how much country he is planting.
+        if (m_placingForest && !m_ui.WantsMouse())
+        {
+            const Vec2 site = ScreenToTerrain(m_input.MousePosition());
+            const f32 radius = ConfigManager::Get().Float("forestry/plantRadius", 150.0f);
+            const f32 phase = std::fmod(m_pulse * 1.1f, 1.0f);
+            const f32 alpha = phase < 0.5f ? phase * 2.0f : (1.0f - phase) * 2.0f;
+            ring(site, radius * 2.0f, Color::FromRGB(0x4D7A2D), 0.35f + alpha * 0.35f);
         }
 
         if (m_hoveredSettlement != kInvalidId)
@@ -1508,11 +2221,25 @@ namespace woc
                 ring(mine->position, 28.0f, m_theme.textStrong, 0.28f);
             }
         }
+        if (m_hoveredCamp != kInvalidId)
+        {
+            if (const BanditCamp* camp = m_world.FindBanditCamp(m_hoveredCamp))
+            {
+                ring(camp->position, 30.0f, m_theme.textStrong, 0.28f);
+            }
+        }
         if (m_selectionKind == SelectionKind::Mine)
         {
             if (const MineSite* mine = m_world.FindMine(m_selected))
             {
                 ring(mine->position, 32.0f, m_theme.selection, 0.45f + 0.2f * std::sin(m_pulse * 4.0f));
+            }
+        }
+        if (m_selectionKind == SelectionKind::BanditCamp)
+        {
+            if (const BanditCamp* camp = m_world.FindBanditCamp(m_selected))
+            {
+                ring(camp->position, 34.0f, m_theme.negative, 0.45f + 0.2f * std::sin(m_pulse * 4.0f));
             }
         }
 
@@ -1542,23 +2269,41 @@ namespace woc
         if (m_selectionKind != SelectionKind::Cohort) return;
 
         const Camera& camera = m_renderer.GetCamera();
+        const MapData& map = m_world.Map();
 
-        const Cohort* cohort = m_world.FindCohort(m_selected);
-        if (!cohort) return;
-
-        // Draw the planned march as a screen-space polyline so it stays visible at any zoom.
-        const Task& task = cohort->currentTask;
-        if (task.waypointIndex < task.waypoints.size())
+        // Every banner in the band draws its own march and its own destination. With a line
+        // of five armies on the move, showing only the one whose panel happens to be open
+        // told the player nothing about where the other four were going.
+        for (EntityId id : m_selectedCohorts)
         {
-            Vec2 previous = camera.MapToScreen(cohort->position, m_world.Map().WorldHeightAtMap(cohort->position));
+            const Cohort* cohort = m_world.FindCohort(id);
+            if (!cohort) continue;
+
+            const bool leading = id == m_selected;
+            const f32 alpha = leading ? 0.75f : 0.45f;
+            const f32 thickness = leading ? 2.0f : 1.5f;
+
+            const Task& task = cohort->currentTask;
+            if (task.waypointIndex >= task.waypoints.size()) continue;
+
+            // Drawn as a screen-space polyline so it stays visible at any zoom.
+            Vec2 previous = camera.MapToScreen(cohort->position, map.WorldHeightAtMap(cohort->position));
             for (size_t i = task.waypointIndex; i < task.waypoints.size(); ++i)
             {
                 const Vec2 point = camera.MapToScreen(task.waypoints[i],
-                                                      m_world.Map().WorldHeightAtMap(task.waypoints[i]));
-                m_renderer.UILine(previous, point, m_theme.selection.WithAlpha(0.75f), 2.0f);
+                                                      map.WorldHeightAtMap(task.waypoints[i]));
+                m_renderer.UILine(previous, point, m_theme.selection.WithAlpha(alpha), thickness);
                 previous = point;
             }
-            m_renderer.UIRect({ previous.x - 4.0f, previous.y - 4.0f, 8.0f, 8.0f }, m_theme.selection);
+
+            // The end of the march, marked where it actually is. A cross rather than a
+            // block, so a row of them reads as a line of positions and not as a smear.
+            const f32 arm = leading ? 7.0f : 5.0f;
+            const Color mark = m_theme.selection.WithAlpha(leading ? 1.0f : 0.7f);
+            m_renderer.UILine({ previous.x - arm, previous.y }, { previous.x + arm, previous.y },
+                              mark, thickness);
+            m_renderer.UILine({ previous.x, previous.y - arm }, { previous.x, previous.y + arm },
+                              mark, thickness);
         }
     }
 }

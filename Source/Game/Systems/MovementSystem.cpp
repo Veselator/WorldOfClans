@@ -5,6 +5,7 @@
 #include "../../Core/Config.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace woc
 {
@@ -45,9 +46,89 @@ namespace woc
         return cost > 0.0f ? cost : 2.5f;
     }
 
+    Vec2 MovementSystem::NearestStanding(const MapData& map, const Vec2& wanted, f32 searchRadius)
+    {
+        if (map.IsPassable(map.ToTile(wanted))) return wanted;
+
+        // Spiral outwards a tile at a time and take the first ground a column could stand
+        // on. Cheap, and it always answers with somewhere near where the order was given.
+        const f32 step = static_cast<f32>(std::max(1u, map.TilePixels()));
+        const i32 rings = std::max(1, static_cast<i32>(searchRadius / step));
+
+        for (i32 ring = 1; ring <= rings; ++ring)
+        {
+            const i32 samples = ring * 8;
+            for (i32 i = 0; i < samples; ++i)
+            {
+                const f32 angle = static_cast<f32>(i) / static_cast<f32>(samples) * 2.0f * kPi;
+                const Vec2 probe{ wanted.x + std::cos(angle) * step * ring,
+                                  wanted.y + std::sin(angle) * step * ring };
+                const Coord tile = map.ToTile(probe);
+                if (map.InBounds(tile) && map.IsPassable(tile)) return probe;
+            }
+        }
+        return wanted;
+    }
+
     bool MovementSystem::OrderMove(World& world, EntityId cohortId, const Vec2& destination)
     {
         return OrderTask(world, cohortId, TaskType::Move, destination);
+    }
+
+    EntityId MovementSystem::Merge(World& world, const std::vector<EntityId>& cohorts)
+    {
+        if (cohorts.size() < 2) return kInvalidId;
+
+        Cohort* host = world.FindCohort(cohorts.front());
+        if (!host) return kInvalidId;
+
+        Clan* clan = world.FindClan(host->clan);
+        if (!clan) return kInvalidId;
+
+        const u32 limit = UnitDatabase::Get().MaxUnitsPerCohort();
+        u32 absorbed = 0;
+        std::vector<EntityId> emptied;
+
+        for (size_t i = 1; i < cohorts.size(); ++i)
+        {
+            Cohort* other = world.FindCohort(cohorts[i]);
+            if (!other || other->id == host->id) continue;
+            if (other->clan != host->clan) continue;      // one banner, one house
+            // Two hosts become one by standing in the same field, not by an order sent
+            // across the map: whoever is too far away is simply left out.
+            if (Distance(other->position, host->position) >
+                ConfigManager::Get().Float("movement/mergeDistance", 40.0f)) continue;
+
+            // What the two hosts bring: the joined army is as well supplied and as well
+            // ordered as the worse of them, because a column is only as good as its tail.
+            host->supply = std::min(host->supply, other->supply);
+            host->organisation = std::min(host->organisation, other->organisation);
+            host->experience = std::max(host->experience, other->experience);
+
+            while (!other->units.empty() && host->units.size() < limit)
+            {
+                const EntityId unitId = other->units.back();
+                other->units.pop_back();
+                if (Unit* unit = world.FindUnit(unitId)) unit->cohort = host->id;
+                host->units.push_back(unitId);
+                ++absorbed;
+            }
+
+            if (other->units.empty()) emptied.push_back(other->id);
+        }
+
+        if (absorbed == 0) return kInvalidId;
+
+        // Forming up as one body takes a moment, exactly as dividing does.
+        host->organisation = Clamp01(host->organisation *
+            ConfigManager::Get().Float("movement/mergeOrganisationCost", 0.9f));
+        host->currentTask.Clear();
+
+        for (EntityId id : emptied) world.DestroyCohort(id);
+
+        world.Log(host->DisplayName() + ": війська зведено докупи (" +
+                  std::to_string(host->units.size()) + " підрозділів)", clan->color);
+        return host->id;
     }
 
     bool MovementSystem::OrderTask(World& world, EntityId cohortId, TaskType type, const Vec2& destination,
@@ -58,27 +139,31 @@ namespace woc
 
         const MapData& map = world.Map();
         const Coord start = map.ToTile(cohort->position);
-        const Coord goal = map.ToTile(destination);
+
+        // Armies stand on ground, not on coordinates. A band of hosts spread into a ring
+        // around a point will inevitably put one of them on water or on a cliff; that host
+        // takes the nearest standing room instead of refusing to march at all.
+        const Vec2 target = NearestStanding(map, destination);
+        const Coord goal = map.ToTile(target);
 
         PathResult path = Pathfinder::Get().FindPath(map, start, goal, &Pathfinder::MovementCost);
-        if (!path.found)
-        {
-            // Fall back to the closest reachable point so an order is never silently dropped.
-            return false;
-        }
+        if (!path.found) return false;
 
         cohort->currentTask.Clear();
         cohort->currentTask.type = type;
-        cohort->currentTask.destination = destination;
+        cohort->currentTask.destination = target;
         cohort->currentTask.targetSettlement = targetSettlement;
         cohort->currentTask.targetCohort = targetCohort;
         cohort->currentTask.waypoints = Pathfinder::ToWaypoints(map, path);
         if (!cohort->currentTask.waypoints.empty())
         {
-            cohort->currentTask.waypoints.back() = destination;
+            cohort->currentTask.waypoints.back() = target;
         }
         cohort->currentTask.waypointIndex = 0;
         cohort->garrisonOf = kInvalidId;
+        // The walls it was sent against are remembered apart from the order, so a relief
+        // army that interrupts the siege does not make the host forget what it came for.
+        cohort->siegeTarget = type == TaskType::Besiege ? targetSettlement : kInvalidId;
         return true;
     }
 
@@ -262,11 +347,23 @@ namespace woc
         const Clan* clan = world.FindClan(cohort.clan);
         const EntityId owner = CoverageSystem::Get().OwnerAt(world, cohort.position);
 
-        // Standing on friendly soil replenishes an army; enemy country wears it down.
+        // Standing on friendly soil is not the same as being fed by it. An army lives off
+        // its own country's barns and off an ally's, because somebody has agreed to open
+        // them; nobody's land has no barns to open, and a neutral's are shut. This is the
+        // difference between marching through a country and being welcome in it.
         const bool friendly = clan && (owner == cohort.clan ||
             (owner != kInvalidId && !world.AreHostile(cohort.clan, owner)));
 
-        const f32 rate = friendly ? 0.06f : -0.035f;
+        bool supplied = clan && owner == cohort.clan;
+        if (clan && !supplied && owner != kInvalidId)
+        {
+            const State* ours = world.StateOfClan(cohort.clan);
+            const State* theirs = world.StateOfClan(owner);
+            supplied = ours && theirs &&
+                       (ours->id == theirs->id || ours->IsAlliedWith(theirs->id));
+        }
+
+        const f32 rate = supplied ? 0.06f : -0.035f;
         cohort.supply = Clamp01(cohort.supply + rate * days);
 
         // Order returns on its own, faster at rest and faster still at home. A large host
@@ -302,6 +399,22 @@ namespace woc
             else if (cohort.currentTask.IsMoving())
             {
                 unit->fatigue = Clamp01(unit->fatigue + fatigue * days);
+            }
+
+            // Drill. A recruit is not a soldier; he becomes one over months of it, and the
+            // mounted arms take the longest because there is a horse to bring on too. Men
+            // learn fastest standing behind their own walls with nothing else to do, more
+            // slowly in camp, and hardly at all on the march.
+            {
+                const f32 span = std::max(1.0f, unit->Stats().trainDays);
+                f32 rate = 1.0f / span;
+                if (cohort.garrisonOf != kInvalidId) rate *= config.Float("movement/trainingGarrisonBonus", 1.5f);
+                else if (cohort.currentTask.IsMoving()) rate *= config.Float("movement/trainingMarchFactor", 0.2f);
+                else rate *= config.Float("movement/trainingCampFactor", 0.6f);
+
+                // Half-starved men do not drill.
+                rate *= 0.4f + Clamp01(cohort.supply) * 0.6f;
+                unit->training = std::min(1.0f, unit->training + rate * days);
             }
 
             if (cohort.supply < 0.25f)
@@ -375,7 +488,9 @@ namespace woc
         case TaskType::Besiege:
         case TaskType::Raid:
         case TaskType::Attack:
-            // The battle system takes over from here; the order stays active.
+        case TaskType::Storm:
+            // The battle system - or, for a robbers' camp, the bandit system - takes over
+            // from here; the order stays active.
             break;
 
         default:

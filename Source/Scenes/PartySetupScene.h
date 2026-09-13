@@ -1,9 +1,15 @@
 // PartySetupScene.h - choose the map, the people, the banners.
+//
+// Every realm on the map is a seat, and every seat is set up the same way: a people (or
+// "draw one") and a banner. One of them is the player's. That is the same shape the lobby
+// works in, which is why a single party and a multiplayer one hand the generator the same
+// document.
 #pragma once
 
 #include "IScene.h"
 #include "../Game/Map/MapLoader.h"
 #include "../Game/WorldGenerator.h"
+#include "MapGenPanel.h"
 
 namespace woc
 {
@@ -21,9 +27,10 @@ namespace woc
     private:
         void RenderMapList(const Rect& area);
         void RenderOptions(const Rect& area);
-        void RenderColors(const Rect& area);
+        void RenderSeats(const Rect& area);
 
-        void EnsureColorCount();
+        /// Pads or trims the seat list to the realm count and keeps the player's seat inside it.
+        void EnsureSeats();
         void RandomiseColors();
         /// The colours a banner may be painted in, straight from game.json.
         const std::vector<u32>& Palette() const { return m_palette; }
@@ -39,13 +46,14 @@ namespace woc
         PartySettings m_settings;
 
         i32 m_selectedMap = 0;
-        i32 m_selectedRace = 0;
-        /// -1 = the player's own banner, otherwise the index of a rival realm.
-        i32 m_colorTarget = -1;
+        /// Which seat's people and banner the right-hand column is editing.
+        i32 m_selectedSeat = 0;
+        /// Which preset is highlighted and what is half-typed in the generator's fields.
+        MapGenPanelState m_genPanel;
 
         std::string m_seedText = "0";
         f32 m_mapScroll = 0.0f;
-        f32 m_colorScroll = 0.0f;
+        f32 m_seatScroll = 0.0f;
         std::string m_error;
     };
 }

@@ -1,4 +1,5 @@
 #include "FogSystem.h"
+#include "CoverageSystem.h"
 #include "../World/World.h"
 #include "../../Core/Config.h"
 #include "../../Core/Profiler.h"
@@ -130,6 +131,13 @@ namespace woc
             }
         }
 
+        // Everything inside one's own borders is watched country. Reeves, roadwardens and
+        // the villages themselves are eyes enough: a lord does not lose sight of a valley
+        // because no banner happens to be standing in it this month. Doing it here rather
+        // than by giving every settlement a bigger sight radius is what makes it follow the
+        // border as the border moves, which is the whole point.
+        RevealOwnLands(world);
+
         RememberSettlements(world);
 
         // Blurring a hundred thousand tiles is the most expensive thing this system does,
@@ -148,6 +156,55 @@ namespace woc
         }
     }
 
+    void FogSystem::RevealOwnLands(World& world)
+    {
+        const State* state = world.HumanState();
+        if (!state) return;
+
+        const MapData& map = world.Map();
+        const std::vector<EntityId>& slotToClan = CoverageSystem::Get().SlotToClan();
+        if (slotToClan.empty()) return;
+
+        // Which palette slots are ours, resolved once: the inner loop then costs a byte
+        // lookup per tile rather than two map searches.
+        std::vector<u8> ours(slotToClan.size(), 0);
+        for (size_t slot = 1; slot < slotToClan.size(); ++slot)
+        {
+            const Clan* clan = world.FindClan(slotToClan[slot]);
+            if (clan && clan->state == state->id) ours[slot] = 1;
+        }
+
+        const std::vector<Tile>& tiles = map.Tiles();
+        for (size_t index = 0; index < tiles.size() && index < m_state.size(); ++index)
+        {
+            const u8 slot = tiles[index].owner;
+            if (slot == 0 || slot >= ours.size() || !ours[slot]) continue;
+
+            if (m_state[index] == static_cast<u8>(FogState::Unseen))
+            {
+                const Coord tile{ static_cast<i32>(index % m_width), static_cast<i32>(index / m_width) };
+                if (m_exploredMax.x < m_exploredMin.x)
+                {
+                    m_exploredMin = tile;
+                    m_exploredMax = tile;
+                }
+                else
+                {
+                    m_exploredMin = { std::min(m_exploredMin.x, tile.x), std::min(m_exploredMin.y, tile.y) };
+                    m_exploredMax = { std::max(m_exploredMax.x, tile.x), std::max(m_exploredMax.y, tile.y) };
+                }
+                ++m_revision;
+            }
+            m_state[index] = static_cast<u8>(FogState::Visible);
+
+            if (m_owners[index] != slot)
+            {
+                m_owners[index] = slot;
+                m_dirty = true;
+            }
+        }
+    }
+
     void FogSystem::RememberSettlements(World& world)
     {
         const i32 today = world.Time().TotalDays();
@@ -162,6 +219,7 @@ namespace woc
             record.position = settlement.position;
             record.kind = settlement.kind;
             record.sprite = settlement.Sprite();
+            record.mirrored = settlement.mirrored;
             record.color = owner ? owner->color : Color::FromRGB(0xB9C0C8);
             record.name = settlement.name;
             record.seenOnDay = today;

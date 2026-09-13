@@ -43,6 +43,10 @@ namespace woc
         /// Resizes the client area; ignored while full screen.
         void SetClientSize(u32 width, u32 height);
 
+        /// Puts a UTF-8 string on the system clipboard. Free-standing because it has
+        /// nothing to do with any particular window, and the lobby wants it for its code.
+        static bool SetClipboardText(const std::string& text);
+
         HWND__* NativeHandle() const { return m_hwnd; }
         HINSTANCE__* NativeInstance() const { return m_instance; }
 

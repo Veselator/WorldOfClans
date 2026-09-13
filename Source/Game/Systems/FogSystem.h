@@ -43,6 +43,7 @@ namespace woc
             Vec2 position;
             SettlementKind kind = SettlementKind::Village;
             SpriteId sprite = SpriteId::Village;
+            bool mirrored = false;
             Color color{ 0.7f, 0.75f, 0.8f, 1.0f };
             std::string name;
             i32 seenOnDay = 0;
@@ -97,6 +98,9 @@ namespace woc
         ~FogSystem() = default;
 
         void Reveal(const World& world, const Vec2& centre, f32 radius);
+        /// Raises every tile the player's own realm holds to "watched". A border that moves
+        /// therefore takes the fog with it, which a fixed sight radius per town never did.
+        void RevealOwnLands(World& world);
         void RememberSettlements(World& world);
 
         std::vector<u8> m_state;        // per tile, FogState

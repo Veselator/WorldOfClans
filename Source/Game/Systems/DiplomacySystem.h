@@ -40,8 +40,19 @@ namespace woc
         /// Monthly opinion drift, truce expiry and AI-initiated diplomacy.
         void Tick(World& world);
 
+        /// Who has seen whom. Run daily: a realm meets another when one of that realm's
+        /// towns or hosts stands within sight of its own, or on its own ground. With the
+        /// fog of war off, everybody knows everybody from the first day.
+        void UpdateContacts(World& world);
+        /// Whether `from` may treat with `to` at all.
+        bool Known(const World& world, EntityId from, EntityId to) const;
+
         std::vector<DiplomaticAction> AvailableActions(World& world, EntityId from, EntityId to) const;
         bool Perform(World& world, EntityId from, EntityId to, DiplomaticAction::Kind kind);
+        /// A peace, a pact or an alliance is a proposal, never a decree. A person is asked, in
+        /// a dialog on his own screen; an AI weighs it on the spot. Returns true if the offer
+        /// was made (not necessarily accepted).
+        bool Offer(World& world, EntityId from, EntityId to, DiplomaticAction::Kind kind);
 
         void DeclareWar(World& world, EntityId from, EntityId to);
         void MakePeace(World& world, EntityId from, EntityId to);
@@ -50,13 +61,17 @@ namespace woc
         bool ArrangeMarriage(World& world, EntityId from, EntityId to);
 
         // --- offers waiting on the player -------------------------------------------------
-        bool HasOffer() const { return !m_offers.empty(); }
-        const DiplomaticOffer& FrontOffer() const { return m_offers.front(); }
-        /// Signs whatever was offered and clears it from the queue.
-        void AcceptOffer(World& world);
+        /// The first embassy waiting on `state`'s answer, or null. Embassies to different
+        /// players wait side by side: one player's unanswered letter holds nobody else up.
+        const DiplomaticOffer* OfferFor(EntityId state) const;
+        /// Signs what was offered to `state` and clears it from the queue.
+        bool AcceptOffer(World& world, EntityId state);
         /// Turns it down. The asker takes it a little to heart, as anyone would.
-        void DeclineOffer(World& world);
+        bool DeclineOffer(World& world, EntityId state);
         void ClearOffers() { m_offers.clear(); }
+        /// Embassies waiting for answers, for saves and resynchronisation.
+        Json ToJson() const;
+        void FromJson(const Json& node);
         /// What the offer is called, for the dialog that asks about it.
         static const char* OfferTitle(DiplomaticAction::Kind kind);
         static const char* OfferBody(DiplomaticAction::Kind kind);
@@ -70,6 +85,10 @@ namespace woc
     private:
         DiplomacySystem() = default;
         ~DiplomacySystem() = default;
+
+        /// The last day contacts were worked out. A pass after a long gap - a new party, a
+        /// loaded save - is done in silence, so a game does not open on a wall of heralds.
+        i32 m_lastContactDay = -1;
 
         void SetStance(World& world, EntityId a, EntityId b, DiplomaticStance stance, i32 untilDay);
         /// Queues an offer for the player, unless the same one is already waiting.

@@ -44,6 +44,12 @@ namespace woc
         f32 range = 1.0f;
         f32 recruitCost = 20.0f;
         f32 upkeep = 0.15f;
+        /// Days of drill between a levy and a soldier. A spearman learns his place in a
+        /// line in a season; a horseman has a horse to teach as well, and takes far longer.
+        f32 trainDays = 60.0f;
+        /// Hours from paying for the company to it standing in the square. Drill (trainDays)
+        /// comes afterwards; this is only the mustering of men, arms and horses.
+        f32 raiseHours = 24.0f;
         f32 morale = 0.75f;
         f32 commandBonus = 0.0f;
     };

@@ -31,7 +31,9 @@ void main()
     vec2 corner = kCorners[gl_VertexIndex];
 
     // corner.y == 0 is the top of the sprite in texture space, so flip for the world offset.
-    vec2 offset = vec2((corner.x - 0.5) * iSize.x,
+    // w shifts the billboard sideways on screen, so a row of small marks can be laid out
+    // over one point without each needing a world position of its own.
+    vec2 offset = vec2((corner.x - 0.5) * iSize.x + iParams.w,
                        (1.0 - corner.y - iParams.x) * iSize.y);
 
     vec4 viewPosition = g.view * vec4(iWorldPosition, 1.0);

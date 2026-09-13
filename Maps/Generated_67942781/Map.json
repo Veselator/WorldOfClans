@@ -1,0 +1,15 @@
+{
+  "description": "Створено генератором: 2176x1336",
+  "layers": {
+    "height": "HeightMap.png",
+    "terrain": "Terrain.png",
+    "trees": "Trees.png"
+  },
+  "name": "Згенерований світ 67942781",
+  "seed": 67942781,
+  "size": {
+    "height": 1336,
+    "width": 2176
+  },
+  "tilePixels": 4
+}

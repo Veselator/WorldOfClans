@@ -4,6 +4,7 @@
 #include "Singleton.h"
 #include "Types.h"
 #include <sstream>
+#include <cstdio>
 #include <fstream>
 #include <mutex>
 

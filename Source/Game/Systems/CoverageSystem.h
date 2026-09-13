@@ -16,6 +16,8 @@
 // land, never quietly into a neighbour's at peace.
 #pragma once
 
+#include "../../Core/Json.h"
+
 #include "../../Core/Singleton.h"
 #include "../../Core/Math.h"
 
@@ -78,6 +80,10 @@ namespace woc
         static const char* ModeName(MapMode mode);
 
         bool IsDirty() const { return m_dirty; }
+        /// The palette and influence slot tables and whether a pass is owed. The flood starts
+        /// from the borders as they stand, so a restored world needs them exactly as they were.
+        Json ToJson() const;
+        void FromJson(const Json& node);
         void MarkDirty() { m_dirty = true; }
         void ClearDirty() { m_dirty = false; }
 
@@ -112,6 +118,10 @@ namespace woc
 
         void AssignPaletteSlots(World& world);
         void AbsorbIndependentVillages(World& world);
+        /// Seats taken on nobody's ground are held by presence alone. When another realm's
+        /// authority closes over one of them it simply changes hands - a garrison a hundred
+        /// miles inside someone else's country is not a possession, it is a hostage.
+        void TransferSeatsHeldByPresence(World& world);
 
         Job BuildJob(World& world);
         static void RunJob(Job& job);

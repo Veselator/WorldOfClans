@@ -6,6 +6,7 @@
 #include "../../Render/Renderer.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace woc
 {
@@ -14,6 +15,207 @@ namespace woc
         Harvest(world);
         Regrow(world);
         GrowFields(world);
+        m_layersDirty = true;
+    }
+
+    // =====================================================================================
+    // Planting a wood
+    // =====================================================================================
+
+    void ForestrySystem::PriceStand(f32 area, ResourceData& cost, i32& days)
+    {
+        ConfigManager& config = ConfigManager::Get();
+
+        // A plot is a thousand square map units - about what a gang of peasants can put in
+        // over a season. Everything below is quoted per one of those.
+        const f32 plots = std::max(0.0f, area) / 1000.0f;
+
+        cost = ResourceData{};
+        cost.money = plots * config.Float("forestry/plantMoneyPerPlot", 5.0f);
+        cost.food = plots * config.Float("forestry/plantFoodPerPlot", 1.6f);
+
+        const f32 work = plots * config.Float("forestry/plantDaysPerPlot", 6.0f);
+        days = static_cast<i32>(std::clamp(work,
+                                           config.Float("forestry/plantMinDays", 240.0f),
+                                           config.Float("forestry/plantMaxDays", 1400.0f)));
+    }
+
+    PlantingPlan ForestrySystem::PlanPlanting(World& world, EntityId clanId, const Vec2& centre) const
+    {
+        PlantingPlan plan;
+        plan.centre = centre;
+
+        const Clan* clan = world.FindClan(clanId);
+        if (!clan) { plan.problem = "Немає роду"; return plan; }
+
+        ConfigManager& config = ConfigManager::Get();
+        const MapData& map = world.Map();
+
+        plan.radius = config.Float("forestry/plantRadius", 150.0f);
+
+        // Peasants walk to work. A wood is planted within reach of a holding of one's own,
+        // not on the far side of the map.
+        f32 nearest = 1e9f;
+        for (EntityId settlementId : clan->settlements)
+        {
+            const Settlement* seat = world.FindSettlement(settlementId);
+            if (!seat || seat->UnderConstruction()) continue;
+            nearest = std::min(nearest, Distance(seat->position, centre));
+        }
+        if (nearest > config.Float("forestry/plantMaxDistanceFromSeat", 620.0f))
+        {
+            plan.problem = "Задалеко від ваших поселень";
+            return plan;
+        }
+
+        // Count what can actually be planted: dry, passable ground that is not already
+        // wood. Ploughland can be given back to the trees, but sand and rock cannot.
+        const i32 span = std::max(1, static_cast<i32>(plan.radius / map.TilePixels()));
+        const Coord origin = map.ToTile(centre);
+        const f32 target = config.Float("forestry/plantTargetDensity", 0.85f);
+
+        for (i32 dy = -span; dy <= span; ++dy)
+        {
+            for (i32 dx = -span; dx <= span; ++dx)
+            {
+                if (dx * dx + dy * dy > span * span) continue;
+                const Coord probe{ origin.x + dx, origin.y + dy };
+                if (!map.InBounds(probe)) continue;
+
+                const Tile& tile = map.At(probe);
+                const TerrainInfo& info = TerrainDatabase::Get().At(tile.terrain);
+                if (!info.arable) continue;                    // only the plains take a wood
+                if (tile.field > 0.2f) continue;               // nobody plants trees in the rye
+                if (tile.forest >= target - 0.05f) continue;   // already wooded
+                ++plan.tiles;
+            }
+        }
+
+        if (plan.tiles <= 0)
+        {
+            plan.problem = "Тут нічого садити: ліс береться лише на вільній рівнині — не на ріллі й не там, де він уже стоїть";
+            return plan;
+        }
+
+        // Only the ground there is actually something to plant on is paid for: a stand
+        // half of which is already wood costs half as much and takes half as long.
+        const f32 tileArea = static_cast<f32>(map.TilePixels()) * static_cast<f32>(map.TilePixels());
+        PriceStand(static_cast<f32>(plan.tiles) * tileArea, plan.cost, plan.days);
+        plan.days = std::max(1, plan.days);
+
+        plan.valid = true;
+        return plan;
+    }
+
+    bool ForestrySystem::BeginPlanting(World& world, EntityId clanId, const PlantingPlan& plan)
+    {
+        if (!plan.valid) return false;
+
+        Clan* clan = world.FindClan(clanId);
+        if (!clan || !clan->resources.CanAfford(plan.cost)) return false;
+
+        clan->resources -= plan.cost;
+
+        Plantation stand;
+        stand.clan = clanId;
+        stand.centre = plan.centre;
+        stand.radius = plan.radius;
+        stand.daysTotal = static_cast<f32>(std::max(1, plan.days));
+        stand.target = ConfigManager::Get().Float("forestry/plantTargetDensity", 0.85f);
+
+        const Settlement* nearest = world.NearestSettlement(plan.centre, 1e9f, clanId);
+        stand.label = nearest ? "Ліс коло " + nearest->name : std::string("Новий ліс");
+
+        world.Log(stand.label + ": селяни беруться саджати ліс (" +
+                  std::to_string(plan.days) + " дн.)", clan->color);
+        m_plantations.push_back(std::move(stand));
+        return true;
+    }
+
+    void ForestrySystem::TickPlantations(World& world, f32 days)
+    {
+        if (m_plantations.empty() || days <= 0.0f) return;
+
+        MapData& map = world.MutableMap();
+
+        for (Plantation& stand : m_plantations)
+        {
+            const f32 before = stand.Progress();
+            stand.daysDone += days;
+            const f32 after = stand.Progress();
+            if (after <= before) continue;
+
+            // The saplings put on exactly the growth the season is worth. Writing the
+            // density straight in, rather than tracking a per-tile plan, keeps a stand
+            // cheap to carry and lets the ordinary regrowth rules take it from there.
+            const f32 step = (after - before) * stand.target;
+            const i32 span = std::max(1, static_cast<i32>(stand.radius / map.TilePixels()));
+            const Coord origin = map.ToTile(stand.centre);
+
+            for (i32 dy = -span; dy <= span; ++dy)
+            {
+                for (i32 dx = -span; dx <= span; ++dx)
+                {
+                    if (dx * dx + dy * dy > span * span) continue;
+                    const Coord probe{ origin.x + dx, origin.y + dy };
+                    if (!map.InBounds(probe)) continue;
+
+                    Tile& tile = map.At(probe);
+                    const TerrainInfo& info = TerrainDatabase::Get().At(tile.terrain);
+                    if (!info.arable) continue;
+                    if (tile.field > 0.2f) continue;   // the ploughland was not part of the bargain
+                    if (tile.forest >= stand.target) continue;
+
+                    tile.forest = std::min(stand.target, tile.forest + step);
+                }
+            }
+            m_layersDirty = true;
+        }
+
+        for (auto it = m_plantations.begin(); it != m_plantations.end(); )
+        {
+            if (it->daysDone < it->daysTotal) { ++it; continue; }
+            world.Log(it->label + ": ліс піднявся", Color::FromRGB(0x4D7A2D));
+            it = m_plantations.erase(it);
+        }
+    }
+
+    Json ForestrySystem::ToJson() const
+    {
+        Json root = Json::MakeObject();
+        Json stands = Json::MakeArray();
+        for (const Plantation& stand : m_plantations)
+        {
+            Json node = Json::MakeObject();
+            node["clan"] = static_cast<i64>(stand.clan);
+            node["x"] = stand.centre.x;
+            node["y"] = stand.centre.y;
+            node["radius"] = stand.radius;
+            node["daysTotal"] = stand.daysTotal;
+            node["daysDone"] = stand.daysDone;
+            node["target"] = stand.target;
+            node["label"] = stand.label;
+            stands.Push(node);
+        }
+        root["plantations"] = stands;
+        return root;
+    }
+
+    void ForestrySystem::FromJson(const Json& node)
+    {
+        m_plantations.clear();
+        for (const Json& entry : node["plantations"].AsArray())
+        {
+            Plantation stand;
+            stand.clan = static_cast<EntityId>(entry["clan"].AsInt(0));
+            stand.centre = { entry["x"].AsFloat(0.0f), entry["y"].AsFloat(0.0f) };
+            stand.radius = entry["radius"].AsFloat(150.0f);
+            stand.daysTotal = entry["daysTotal"].AsFloat(1.0f);
+            stand.daysDone = entry["daysDone"].AsFloat(0.0f);
+            stand.target = entry["target"].AsFloat(0.85f);
+            stand.label = entry["label"].AsString();
+            m_plantations.push_back(std::move(stand));
+        }
         m_layersDirty = true;
     }
 
@@ -84,7 +286,9 @@ namespace woc
                 const Tile& tile = tiles[index];
 
                 const TerrainInfo& info = TerrainDatabase::Get().At(tile.terrain);
-                if (info.water || !info.passable) continue;
+                // A wood grows on the plains. Sand will not hold it, and the hillsides and
+                // the highland are too thin and too cold for anything to spread across.
+                if (!info.arable) continue;
                 if (tile.field > 0.3f) continue;     // ploughed land is kept clear
                 if (tile.forest >= 0.98f) continue;
 
@@ -181,6 +385,23 @@ namespace woc
             if (tile.field <= 0.0f) continue;
             if (terrain.At(tile.terrain).arable) continue;
             tile.field = 0.0f;
+            changed = true;
+        }
+        if (changed) m_layersDirty = true;
+    }
+
+    void ForestrySystem::ClearUnforestable(World& world)
+    {
+        MapData& map = world.MutableMap();
+        if (!map.IsValid()) return;
+
+        const TerrainDatabase& terrain = TerrainDatabase::Get();
+        bool changed = false;
+        for (Tile& tile : map.Tiles())
+        {
+            if (tile.forest <= 0.0f) continue;
+            if (terrain.At(tile.terrain).arable) continue;
+            tile.forest = 0.0f;
             changed = true;
         }
         if (changed) m_layersDirty = true;

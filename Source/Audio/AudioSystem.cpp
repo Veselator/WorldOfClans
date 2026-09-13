@@ -86,6 +86,7 @@ namespace woc
             return false;
         }
 
+        m_master->SetVolume(m_masterVolume);
         AudioDecoder::Initialise();
         LoadEffectBank();
 
@@ -375,6 +376,14 @@ namespace woc
         }
 #else
         (void)deltaTime;
+#endif
+    }
+
+    void AudioSystem::SetMasterVolume(f32 volume)
+    {
+        m_masterVolume = Clamp01(volume);
+#if defined(_WIN32)
+        if (m_master) m_master->SetVolume(m_masterVolume);
 #endif
     }
 

@@ -2,6 +2,8 @@
 #pragma once
 
 #include "IScene.h"
+#include "LobbyPanel.h"
+#include "SettingsScene.h"
 #include "../Core/Math.h"
 #include "../Game/Map/MapData.h"
 #include "../Game/SaveGame.h"
@@ -31,6 +33,12 @@ namespace woc
         bool m_hasBackdrop = false;
         f32 m_intro = 0.0f;        // 0..1, the opening push-in
         f32 m_drift = 0.0f;        // how far the slow orbit has turned
+
+        /// The preferences, drawn over this very backdrop rather than on a screen of
+        /// their own. Opening them costs the player nothing he was looking at.
+        SettingsPanel m_settings;
+        /// The multiplayer front end, drawn over the same backdrop as everything else.
+        LobbyPanel m_lobby;
 
         std::vector<SaveSlot> m_saves;
         bool m_loadOpen = false;
