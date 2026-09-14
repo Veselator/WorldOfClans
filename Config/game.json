@@ -352,6 +352,12 @@
     "withdrawKillShare": 0.5,
     "withdrawDistance": 55.0,
     "withdrawOrganisation": 0.25,
+    "//retreatSpeed": "У скільки разів швидше за марш біжить військо, що відступає з бою",
+    "retreatSpeedFactor": 2.2,
+    "//annihilation": "Коли розбите військо гине цілком: лишилося менше routCollapseStrength людей, порядок ще не відновився після попереднього розгрому (shatterOrganisation), або перемога надто нищівна (сила переможця / сила переможеного x фланг x перевага в швидкості >= annihilationRatio)",
+    "routCollapseStrength": 0.25,
+    "shatterOrganisation": 0.2,
+    "annihilationRatio": 4.0,
     "woundedHealPerDay": 0.045,
     "woundedDiePerDay": 0.006,
     "woundedRestBonus": 2.0,
@@ -389,6 +395,8 @@
   "bandits": {
     "//bandits": "Розбійники: скільки таборів на карті, як часто вони збирають ватаги і що дає спалений табір",
     "campsPerMillionPixels": 2.6,
+    "//raidCooldown": "Скільки днів розбійники не повертаються до щойно пограбованого поселення",
+    "raidCooldownDays": 20,
     "maxCamps": 24,
     "bands": 4,
     "campStrength": 60.0,
@@ -502,6 +510,8 @@
         "reachBeyondBorder": 90.0,
         "homeGarrisonShare": 0.75,
         "allowRaiding": false,
+        "raidForeignChance": 0.0,
+        "razeForeignChance": 0.0,
         "warAppetite": 0.04,
         "warStrengthRatio": 2.2
       },
@@ -520,6 +530,8 @@
         "reachBeyondBorder": 260.0,
         "homeGarrisonShare": 0.5,
         "allowRaiding": true,
+        "raidForeignChance": 0.1,
+        "razeForeignChance": 0.0,
         "warAppetite": 0.15,
         "warStrengthRatio": 1.5
       },
@@ -537,7 +549,10 @@
         "requiredEdge": 0.95,
         "reachBeyondBorder": 620.0,
         "homeGarrisonShare": 0.25,
+        "//foreign": "Шанс грабувати замість захоплення поселення чужого народу, і шанс спалити нещодавно захоплене чуже село",
         "allowRaiding": true,
+        "raidForeignChance": 0.5,
+        "razeForeignChance": 0.35,
         "warAppetite": 0.45,
         "warStrengthRatio": 1.05
       }

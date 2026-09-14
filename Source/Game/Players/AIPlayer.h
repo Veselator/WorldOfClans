@@ -34,6 +34,9 @@ namespace woc
 
     public:
         void OnThink(World& world, i32 day) override;
+        /// An aggressive lord has no use for villages of another people he has just taken:
+        /// he plunders them to the ground rather than garrison them.
+        void BurnForeignVillages(World& world, Clan& clan, i32 day);
 
         /// Whether this lord agrees to what `from` proposes. Temperament decides part of it -
         /// an aggressive prince dislikes being tied down, a cautious one likes friends - and

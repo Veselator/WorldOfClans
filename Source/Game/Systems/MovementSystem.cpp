@@ -25,7 +25,9 @@ namespace woc
 
         const f32 base = ConfigManager::Get().Float("movement/baseSpeed", 14.0f);
         const f32 supplyFactor = 0.6f + Clamp01(cohort->supply) * 0.4f;
-        return base * slowest * supplyFactor;
+        // Men running from a lost field cover ground they could never march in good order.
+        const f32 flight = cohort->retreating ? ConfigManager::Get().Float("battle/retreatSpeedFactor", 2.2f) : 1.0f;
+        return base * slowest * supplyFactor * flight;
     }
 
     f32 MovementSystem::CurrentPace(const World& world, EntityId cohortId) const
@@ -150,6 +152,7 @@ namespace woc
         if (!path.found) return false;
 
         cohort->currentTask.Clear();
+        cohort->retreating = false;   // a fresh order is marched, not run
         cohort->currentTask.type = type;
         cohort->currentTask.destination = target;
         cohort->currentTask.targetSettlement = targetSettlement;
@@ -470,6 +473,7 @@ namespace woc
         Task& task = cohort.currentTask;
         task.waypoints.clear();
         task.waypointIndex = 0;
+        cohort.retreating = false;
 
         switch (task.type)
         {

@@ -148,6 +148,13 @@ namespace woc
         /// Pulls a beaten host back out of contact, or destroys it where it stands when
         /// there is nowhere for it to go.
         void FallBack(World& world, Cohort& host, const Vec2& threat, f32 distance);
+        /// Sends a host running for `landing`: a real march at retreat pace, not a jump, and
+        /// kept out of contact for as long as the run takes.
+        void BeginRetreat(World& world, Cohort& host, const Vec2& landing);
+        /// Whether a host that has just broken is finished rather than merely beaten: too few
+        /// men, no order left from an earlier rout, or a defeat so one-sided - odds, flanks,
+        /// horsemen at its heels - that nothing gets away.
+        bool IsAnnihilated(World& world, const Cohort& host, f32 organisationBefore, f32 decisiveness) const;
         /// Wipes out hosts that are past fighting: too few men left and no order to hold
         /// them together. Such a host does not withdraw in good order, it ceases to exist.
         void CullBrokenHosts(World& world, BattleReport& report);

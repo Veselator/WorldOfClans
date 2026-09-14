@@ -32,6 +32,7 @@ namespace woc
         node["mayRaid"] = mayRaid;
         node["suppressRevolts"] = suppressRevolts;
         node["disengage"] = disengageDays;
+        node["retreating"] = retreating;
         node["organisation"] = organisation;
         node["garrisonOf"] = EncodeId(garrisonOf);
         if (homeCamp != kInvalidId) node["homeCamp"] = EncodeId(homeCamp);
@@ -75,6 +76,7 @@ namespace woc
         cohort.mayRaid = node["mayRaid"].AsBool(false);
         cohort.suppressRevolts = node["suppressRevolts"].AsBool(false);
         cohort.disengageDays = node["disengage"].AsFloat(0.0f);
+        cohort.retreating = node["retreating"].AsBool(false);
         cohort.organisation = node["organisation"].AsFloat(1.0f);
         cohort.garrisonOf = DecodeId(node["garrisonOf"]);
         cohort.homeCamp = DecodeId(node["homeCamp"]);

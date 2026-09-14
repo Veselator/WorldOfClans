@@ -1,5 +1,6 @@
 #include "BattleSystem.h"
 #include "CoverageSystem.h"
+#include "MovementSystem.h"
 #include "../Factories/CharacterFactory.h"
 #include "../Factories/EvaluatorFactory.h"
 #include "../World/World.h"
@@ -240,7 +241,7 @@ namespace woc
         Vec2 landing;
         if (FindRetreat(world, host, threat, distance, landing))
         {
-            host.position = landing;
+            BeginRetreat(world, host, landing);
             return;
         }
 
@@ -250,6 +251,50 @@ namespace woc
         world.Log(host.DisplayName() + ": оточено, відступати нікуди — військо полягло",
                   clan ? clan->color : Color::FromRGB(0xB0413E));
         world.DestroyCohort(host.id);
+    }
+
+    void BattleSystem::BeginRetreat(World& world, Cohort& host, const Vec2& landing)
+    {
+        MovementSystem& movement = MovementSystem::Get();
+        // Round the obstacle if there is one; if the path finder cannot help, straight at it -
+        // FindRetreat already made sure the ground there holds.
+        if (!movement.OrderTask(world, host.id, TaskType::Move, landing))
+        {
+            host.currentTask.Clear();
+            host.currentTask.type = TaskType::Move;
+            host.currentTask.destination = landing;
+            host.currentTask.waypoints = { landing };
+            host.currentTask.waypointIndex = 0;
+            host.garrisonOf = kInvalidId;
+        }
+        host.retreating = true;
+        host.inBattle = false;
+
+        // Out of reach for the length of the run, and a little over.
+        const f32 speed = movement.CohortSpeed(world, host.id);
+        const f32 travel = speed > 0.0f ? Distance(host.position, landing) / speed : 0.0f;
+        host.disengageDays = std::max(host.disengageDays, travel + 0.5f);
+    }
+
+    bool BattleSystem::IsAnnihilated(World& world, const Cohort& host, f32 organisationBefore,
+                                     f32 decisiveness) const
+    {
+        ConfigManager& config = ConfigManager::Get();
+        u32 strength = 0, full = 0;
+        for (EntityId unitId : host.units)
+        {
+            const Unit* unit = world.FindUnit(unitId);
+            if (!unit) continue;
+            strength += unit->Strength();
+            full += unit->establishment;
+        }
+        // Nobody left on his feet: the wounded are carried off by the enemy, not away.
+        if (strength == 0) return true;
+        const f32 fraction = full > 0 ? static_cast<f32>(strength) / static_cast<f32>(full) : 1.0f;
+        if (fraction <= config.Float("battle/routCollapseStrength", 0.25f)) return true;
+        // Broken once already and not yet rallied: the second rout is the last.
+        if (organisationBefore <= config.Float("battle/shatterOrganisation", 0.2f)) return true;
+        return decisiveness >= config.Float("battle/annihilationRatio", 4.0f);
     }
 
     void BattleSystem::CullBrokenHosts(World& world, BattleReport& report)
@@ -277,7 +322,8 @@ namespace woc
                 if (full == 0) continue;
 
                 const f32 fraction = static_cast<f32>(strength) / static_cast<f32>(full);
-                if (host->organisation > orderFloor || fraction > strengthFloor) continue;
+                // Nobody standing at all is the end of it whatever the order says.
+                if (strength > 0 && (host->organisation > orderFloor || fraction > strengthFloor)) continue;
 
                 const Clan* clan = world.FindClan(host->clan);
                 world.Log(host->DisplayName() + " перестає існувати як військо",
@@ -404,15 +450,15 @@ namespace woc
                               trapped ? trapped->color : Color::FromRGB(0xB0413E));
                     return false;
                 }
-                cohort->position = landing;
+                BeginRetreat(world, *cohort, landing);
             }
         }
 
         cohort->organisation = Clamp01(cohort->organisation -
                                        config.Float("battle/withdrawOrganisation", 0.25f));
-        cohort->disengageDays = config.Float("battle/disengageDays", 3.0f);
+        cohort->disengageDays = std::max(cohort->disengageDays, config.Float("battle/disengageDays", 3.0f));
         cohort->inBattle = false;
-        cohort->currentTask.Clear();
+        if (!cohort->retreating) cohort->currentTask.Clear();
 
         // A host that came up alongside and then thought better of it simply leaves the
         // line; the fight goes on without it. Only when the side's own banner walks away
@@ -1027,6 +1073,7 @@ namespace woc
                 BattleSide& winningSide = attackerBroke ? report.defender : report.attacker;
                 Cohort* loser = attackerBroke ? a : b;
                 Cohort* winner = attackerBroke ? b : a;
+                const Vec2 winnerPosition = winner->position;
 
                 // The pursuit is where the dying is done - but a broken host is not an
                 // annihilated one. It runs, loses its order, and can be rallied.
@@ -1049,6 +1096,20 @@ namespace woc
                 winningSide.losses += chaseDead;
                 winningSide.hurt += chaseHurt;
 
+                // How one-sided it was. The odds at the moment of breaking, how far round the
+                // beaten line the enemy had got, and whether the victors ride faster than the
+                // beaten can run: a rout before horsemen is a massacre, one before foot is not.
+                const f32 winnerPower = std::max(0.0f, attackerBroke ? powerB : powerA);
+                const f32 loserPower = std::max(1.0f, attackerBroke ? powerA : powerB);
+                f32 slowestLoser = 1e9f, slowestWinner = 1e9f;
+                for (EntityId id : losingSide.Hosts())
+                    slowestLoser = std::min(slowestLoser, MovementSystem::Get().CohortSpeed(world, id));
+                for (EntityId id : winningSide.Hosts())
+                    slowestWinner = std::min(slowestWinner, MovementSystem::Get().CohortSpeed(world, id));
+                const f32 chase = slowestLoser > 0.0f && slowestLoser < 1e8f && slowestWinner < 1e8f
+                    ? std::clamp(slowestWinner / slowestLoser, 0.75f, 1.6f) : 1.0f;
+                const f32 decisiveness = winnerPower / loserPower * (1.0f + losingSide.flanked) * chase;
+
                 // The whole beaten line gives way, not only the banner that started it.
                 const f32 routDistance = config.Float("battle/routDistance", 60.0f);
                 const f32 routOrganisation = config.Float("battle/routOrganisation", 0.35f);
@@ -1058,13 +1119,23 @@ namespace woc
                 {
                     Cohort* host = world.FindCohort(id);
                     if (!host) continue;
+
+                    if (IsAnnihilated(world, *host, host->organisation, decisiveness))
+                    {
+                        const Clan* beaten = world.FindClan(host->clan);
+                        world.Log(host->DisplayName() + ": розгромлено вщент, ніхто не врятувався",
+                                  beaten ? beaten->color : Color::FromRGB(0xB0413E));
+                        losingSide.losses += world.CohortStrength(id);
+                        world.DestroyCohort(id);
+                        continue;
+                    }
                     host->currentTask.Clear();
                     host->organisation = Clamp01(host->organisation * routOrganisation);
                     host->disengageDays = disengage;
                     host->inBattle = false;
                     // Onto ground, and away from the man who beat them - or nowhere, and
                     // then the field is where they stay.
-                    FallBack(world, *host, winner->position, routDistance);
+                    FallBack(world, *host, winnerPosition, routDistance);
                 }
                 for (EntityId id : winningSide.Hosts())
                 {
@@ -1434,6 +1505,7 @@ namespace woc
             settlement->population = std::max(20, static_cast<i32>(
                 population * (1.0f - action["populationLoss"].AsFloat(0.1f))));
 
+            settlement->raidedDay = world.Time().TotalDays();
             world.Log(settlement->name + " пограбовано родом " + raider->name, Color::FromRGB(0xC05046));
             cohort.currentTask.Clear();
         }

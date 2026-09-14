@@ -332,11 +332,16 @@ namespace woc
         MovementSystem& movement = MovementSystem::Get();
 
         const f32 range = config.Float("bandits/raidRange", 700.0f);
+        const i32 cooldown = config.Int("bandits/raidCooldownDays", 20);
+        const i32 today = world.Time().TotalDays();
         const f32 goHome = config.Float("bandits/retreatStrength", 0.45f);
 
         for (auto& [cohortId, cohort] : world.Cohorts())
         {
-            if (cohort.homeCamp == kInvalidId || cohort.IsEmpty()) continue;
+            // Every band of robbers, camp or no camp: burning the camp takes their hoard and
+            // their home, not their appetite. A homeless band goes on robbing until it is
+            // hunted down.
+            if (cohort.IsEmpty() || !IsOutlaw(world, cohort.clan)) continue;
             if (cohort.inBattle || cohort.IsWithdrawing()) continue;
             if (cohort.currentTask.IsMoving()) continue;
 
@@ -384,6 +389,7 @@ namespace woc
             for (const auto& [id, settlement] : world.Settlements())
             {
                 if (settlement.UnderConstruction()) continue;
+                if (today - settlement.raidedDay < cooldown) continue;   // picked clean already
                 const f32 distance = Distance(cohort.position, settlement.position);
                 if (distance >= best) continue;
 

@@ -75,6 +75,9 @@ namespace woc
         /// fight until it has caught its breath.
         f32 disengageDays = 0.0f;
         bool IsWithdrawing() const { return disengageDays > 0.0f; }
+        /// Falling back from a lost fight or a broken-off one: the host moves at a run until
+        /// it reaches the ground it was making for, or until it is given a new order.
+        bool retreating = false;
         EntityId garrisonOf = kInvalidId;   // settlement this cohort is stationed in
         /// The robbers' camp this band came out of, and goes back to when it is mauled.
         /// kInvalidId for everybody else, and for a band whose camp has been burnt.

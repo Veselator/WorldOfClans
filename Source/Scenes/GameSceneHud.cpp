@@ -2533,13 +2533,24 @@ namespace woc
             if (!settlement) return;
             const Clan* owner = m_world.FindClan(settlement->owner);
 
-            std::string text = settlement->name + " — " + settlement->TierName() + "\n";
-            text += "Власник: " + (owner ? owner->name : std::string("незалежне")) + "\n";
-            text += "Народ: " + races.Race(settlement->raceId).name +
-                    ", віра: " + races.Faith(settlement->faithId).name + "\n";
-            text += "Населення: " + std::to_string(settlement->population) +
-                    ", вірність: " + Percent(settlement->loyalty);
-            m_ui.Tooltip(text);
+            // People and faith are coloured against the player's own: green where they are
+            // his, red where they are not - the first thing a lord wants to know of a place.
+            const State* human = m_world.HumanState();
+            const Clan* lead = human ? m_world.FindClan(human->leader) : nullptr;
+            auto kin = [&](bool same) { return human ? (same ? m_theme.positive : m_theme.negative) : m_theme.text; };
+
+            std::vector<std::vector<TooltipSpan>> lines;
+            lines.push_back({ { settlement->name + " — " + settlement->TierName(), m_theme.text } });
+            lines.push_back({ { "Власник: " + (owner ? owner->name : std::string("незалежне")), m_theme.text } });
+            lines.push_back({
+                { "Народ: ", m_theme.text },
+                { races.Race(settlement->raceId).name, kin(human && settlement->raceId == human->raceId) },
+                { ", віра: ", m_theme.text },
+                { races.Faith(settlement->faithId).name, kin(lead && settlement->faithId == lead->faithId) },
+            });
+            lines.push_back({ { "Населення: " + std::to_string(settlement->population) +
+                                ", вірність: " + Percent(settlement->loyalty), m_theme.text } });
+            m_ui.Tooltip(std::move(lines));
             return;
         }
 

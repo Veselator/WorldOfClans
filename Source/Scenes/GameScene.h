@@ -266,5 +266,11 @@ namespace woc
         f32 m_pulse = 0.0f;
         std::string m_status;
         f32 m_statusTimer = 0.0f;
+        /// Last frame's length, for effects that run on the screen's clock.
+        f32 m_frameDelta = 0.0f;
+        /// Each host's headcount as last drawn, and how much is left of the flash its number
+        /// gives when men are lost.
+        struct LossFlash { u32 strength = 0; size_t units = 0; f32 timer = 0.0f; };
+        std::unordered_map<EntityId, LossFlash> m_lossFlash;
     };
 }

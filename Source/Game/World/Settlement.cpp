@@ -63,6 +63,7 @@ namespace woc
         node["lastProduction"] = lastProduction;
         node["coverageStrength"] = coverageStrength;
         node["newLordUntilDay"] = newLordUntilDay;
+        node["raidedDay"] = raidedDay;
         node["heldByPresence"] = heldByPresence;
         if (foundingDaysLeft > 0.0f)
         {
@@ -132,6 +133,7 @@ namespace woc
         settlement.lastProduction = node["lastProduction"].AsFloat(0.0f);
         settlement.coverageStrength = node["coverageStrength"].AsFloat(0.0f);
         settlement.newLordUntilDay = node["newLordUntilDay"].AsInt(0);
+        settlement.raidedDay = node["raidedDay"].AsInt(-100000);
         settlement.heldByPresence = node["heldByPresence"].AsBool(false);
         settlement.foundingDaysLeft = node["foundingDaysLeft"].AsFloat(0.0f);
         settlement.foundingDaysTotal = node["foundingDaysTotal"].AsFloat(0.0f);

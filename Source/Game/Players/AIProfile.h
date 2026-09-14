@@ -49,6 +49,11 @@ namespace woc
         f32 refillBelow = 0.65f;
         f32 refillUntil = 0.9f;
         bool allowRaiding = true;
+        /// Chance that a host able to take a settlement of another people plunders it
+        /// instead: a lord who has no wish to rule strangers still wants their silver.
+        f32 raidForeignChance = 0.0f;
+        /// Chance per think of burning out a village of another people taken lately.
+        f32 razeForeignChance = 0.0f;
 
         // --- how it talks --------------------------------------------------------------
         /// Chance per think of declaring war on a weaker neighbour.

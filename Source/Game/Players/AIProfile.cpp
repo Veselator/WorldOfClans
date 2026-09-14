@@ -50,6 +50,8 @@ namespace woc
             aggressive.reachBeyondBorder = 620.0f;
             aggressive.homeGarrisonShare = 0.25f;
             aggressive.allowRaiding = true;
+            aggressive.raidForeignChance = 0.5f;
+            aggressive.razeForeignChance = 0.35f;
             aggressive.refillBelow = 0.4f;
             aggressive.refillUntil = 0.7f;
             aggressive.warAppetite = 0.45f;
@@ -76,6 +78,8 @@ namespace woc
         profile.reachBeyondBorder = node["reachBeyondBorder"].AsFloat(profile.reachBeyondBorder);
         profile.homeGarrisonShare = node["homeGarrisonShare"].AsFloat(profile.homeGarrisonShare);
         profile.allowRaiding = node["allowRaiding"].AsBool(profile.allowRaiding);
+        profile.raidForeignChance = node["raidForeignChance"].AsFloat(profile.raidForeignChance);
+        profile.razeForeignChance = node["razeForeignChance"].AsFloat(profile.razeForeignChance);
         profile.refillBelow = node["refillBelow"].AsFloat(profile.refillBelow);
         profile.refillUntil = std::max(profile.refillBelow, node["refillUntil"].AsFloat(profile.refillUntil));
 

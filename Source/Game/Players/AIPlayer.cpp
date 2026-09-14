@@ -139,6 +139,7 @@ namespace woc
             const RealmShape realm = MeasureRealm(world, *clan);
 
             ManageEconomy(world, *clan);
+            BurnForeignVillages(world, *clan, day);
             ManageMilitary(world, *clan, realm);
             if (clanId == state->leader) ManageDiplomacy(world, *clan, realm);
 
@@ -652,13 +653,41 @@ namespace woc
             const f32 defense = BattleSystem::Get().SettlementDefense(world, target);
 
             TaskType task = TaskType::Besiege;
+            const bool foreign = settlement->raceId != clan.raceId;
             if (power <= defense * m_profile.requiredEdge)
             {
                 if (!m_profile.allowRaiding || settlement->owner == kInvalidId) continue;
                 task = TaskType::Raid;
             }
+            else if (foreign && m_profile.allowRaiding && settlement->owner != kInvalidId &&
+                     m_random.Chance(m_profile.raidForeignChance))
+            {
+                // Strong enough to take it, and not interested in ruling its people.
+                task = TaskType::Raid;
+            }
 
             if (movement.OrderTask(world, cohortId, task, settlement->position, target)) ++campaigning;
+        }
+    }
+
+    void AIPlayer::BurnForeignVillages(World& world, Clan& clan, i32 day)
+    {
+        if (m_profile.razeForeignChance <= 0.0f || clan.settlements.size() <= 1) return;
+
+        const std::vector<EntityId> holdings = clan.settlements;   // Raze edits the list
+        for (EntityId settlementId : holdings)
+        {
+            if (clan.settlements.size() <= 1) break;
+            const Settlement* settlement = world.FindSettlement(settlementId);
+            if (!settlement || settlement->kind != SettlementKind::Village) continue;
+            if (settlement->raceId == clan.raceId) continue;
+            // Only what was taken lately, while it is still a conquest and not yet home.
+            if (day >= settlement->newLordUntilDay) continue;
+            if (!m_random.Chance(m_profile.razeForeignChance)) continue;
+
+            world.Log(clan.name + " не бажає правити чужинцями: " + settlement->name + " спалено",
+                      clan.color);
+            SettlementSystem::Get().Raze(world, settlementId, clan.id);
         }
     }
 

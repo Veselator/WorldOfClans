@@ -14,6 +14,13 @@
 
 namespace woc
 {
+    /// A run of tooltip text in one colour.
+    struct TooltipSpan
+    {
+        std::string text;
+        Color color;
+    };
+
     class UI final : public Singleton<UI>
     {
         friend class Singleton<UI>;
@@ -135,6 +142,8 @@ namespace woc
 
         /// Queues a tooltip for the end of the frame, positioned near the cursor.
         void Tooltip(const std::string& text);
+        /// A tooltip whose lines are made of differently coloured pieces. Not wrapped.
+        void Tooltip(std::vector<std::vector<TooltipSpan>> lines);
         void TooltipIfHovered(const Rect& rect, const std::string& text);
         /// The same, with a second block written underneath in its own colour - what a
         /// building does, say, set apart from what it is.
@@ -204,6 +213,7 @@ namespace woc
         std::vector<f32> m_scrollTops;
         std::unordered_map<const f32*, f32> m_scrollExtents;   // stack of active scroll clips
         std::string m_tooltip;
+        std::vector<std::vector<TooltipSpan>> m_tooltipLines;
         std::string m_tooltipAccent;
         Color m_tooltipAccentColor{ 1.0f, 1.0f, 1.0f, 1.0f };
     };

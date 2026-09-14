@@ -68,6 +68,9 @@ namespace woc
         /// welcome, unsettles a town; the unrest is real but it passes, and it is the only
         /// reason a place of the lord's own people and gods is ever discontented.
         i32 newLordUntilDay = 0;
+        /// The day it was last plundered. Robbers do not ride back to a village they emptied
+        /// last week; there is nothing left in it yet.
+        i32 raidedDay = -100000;
         /// Days of building work still owed before the seat is a seat. Nobody raises a city
         /// in an afternoon: until this runs out the place stands on the map as a site, gives
         /// nothing, holds no country and takes no orders.

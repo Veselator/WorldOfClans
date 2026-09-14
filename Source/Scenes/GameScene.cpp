@@ -323,6 +323,7 @@ namespace woc
     void GameScene::Update(f32 deltaTime)
     {
         m_pulse += deltaTime;
+        m_frameDelta = deltaTime;
         if (m_statusTimer > 0.0f) m_statusTimer -= deltaTime;
 
         if (PoliticsSystem::Get().CurrentOutcome() != Outcome::Playing)
@@ -1945,6 +1946,28 @@ namespace woc
         const Vec2 half = camera.VisibleHalfExtent() + Vec2{ 120.0f, 160.0f };
         const Vec2 focus = camera.Focus();
 
+        // Losses flash the number: red and a size up for a moment, then quickly back. The
+        // count is followed for every host, drawn or not, so a host coming into view does
+        // not flash for losses taken out of sight. A headcount that drops because companies
+        // left (a split, a garrison posting) is not a loss.
+        const f32 flashSeconds = config.Float("render/cohortLossFlashSeconds", 0.5f);
+        const f32 flashGrow = config.Float("render/cohortLossFlashGrow", 0.35f);
+        for (auto it = m_lossFlash.begin(); it != m_lossFlash.end();)
+        {
+            if (!m_world.FindCohort(it->first)) it = m_lossFlash.erase(it);
+            else ++it;
+        }
+        for (const auto& [id, cohort] : m_world.Cohorts())
+        {
+            const u32 strength = m_world.CohortStrength(id);
+            auto [entry, fresh] = m_lossFlash.try_emplace(id);
+            LossFlash& flash = entry->second;
+            if (!fresh && strength < flash.strength && cohort.units.size() >= flash.units) flash.timer = flashSeconds;
+            flash.strength = strength;
+            flash.units = cohort.units.size();
+            flash.timer = std::max(0.0f, flash.timer - m_frameDelta);
+        }
+
         for (const auto& [id, cohort] : m_world.Cohorts())
         {
             if (cohort.garrisonOf != kInvalidId) continue;
@@ -1956,16 +1979,25 @@ namespace woc
             const Vec2 screen = camera.MapToScreen(cohort.position,
                                                    map.WorldHeightAtMap(cohort.position));
 
-            const f32 lineHeight = m_renderer.TextHeight(scale);
-            const Rect box{ screen.x - square * 0.5f,
-                            screen.y + square * config.Float("render/cohortCountDrop", 0.1f),
-                            square, lineHeight };
+            // Full red for the first part of the flash, then a quick fade back to white.
+            const f32 flash = flashSeconds > 0.0f
+                ? std::clamp(m_lossFlash[id].timer / flashSeconds * 1.8f, 0.0f, 1.0f) : 0.0f;
+            const f32 textScale = scale * (1.0f + flashGrow * flash);
+            const Color colour{ 1.0f, 1.0f - 0.72f * flash, 1.0f - 0.76f * flash, 1.0f };
+
+            const f32 baseHeight = m_renderer.TextHeight(scale);
+            const f32 lineHeight = m_renderer.TextHeight(textScale);
+            const f32 grow = square * 0.5f * flashGrow * flash;
+            const Rect box{ screen.x - square * 0.5f - grow,
+                            screen.y + square * config.Float("render/cohortCountDrop", 0.1f) -
+                                (lineHeight - baseHeight) * 0.5f,
+                            square + grow * 2.0f, lineHeight };
 
             // A shadow under the digits: a banner can be any colour, and white on yellow
             // needs the help.
             m_renderer.UITextCentered(text, { box.x + 1.0f, box.y + 1.0f, box.w, box.h },
-                                      m_theme.shadow.WithAlpha(0.8f), scale);
-            m_renderer.UITextCentered(text, box, Color(1.0f, 1.0f, 1.0f, 1.0f), scale);
+                                      m_theme.shadow.WithAlpha(0.8f), textScale);
+            m_renderer.UITextCentered(text, box, colour, textScale);
         }
     }
 

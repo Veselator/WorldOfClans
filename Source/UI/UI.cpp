@@ -39,6 +39,7 @@ namespace woc
         m_hotId = 0;
         m_hasModal = false;
         m_tooltip.clear();
+        m_tooltipLines.clear();
         m_clipRegions.clear();
         m_caretTimer += Renderer::Get().DeltaTime();
 
@@ -60,10 +61,45 @@ namespace woc
             m_blurPending = false;
         }
 
-        if (m_tooltip.empty() && m_tooltipAccent.empty()) return;
+        if (m_tooltip.empty() && m_tooltipAccent.empty() && m_tooltipLines.empty()) return;
 
         Renderer& renderer = Renderer::Get();
         const Theme& theme = Theme::Get();
+
+        if (!m_tooltipLines.empty())
+        {
+            const f32 lineHeight = renderer.TextHeight();
+            f32 widest = 0.0f;
+            for (const auto& line : m_tooltipLines)
+            {
+                f32 width = 0.0f;
+                for (const TooltipSpan& span : line) width += renderer.TextWidth(span.text);
+                widest = std::max(widest, width);
+            }
+            const Vec2 viewport = renderer.ViewportSize();
+            const f32 width = widest + theme.padding * 2.0f;
+            const f32 height = m_tooltipLines.size() * lineHeight + theme.padding * 2.0f;
+            f32 x = m_mouse.x + 16.0f;
+            f32 y = m_mouse.y + 18.0f;
+            if (x + width > viewport.x) x = m_mouse.x - width - 8.0f;
+            if (y + height > viewport.y) y = viewport.y - height - 4.0f;
+
+            const Rect box{ x, y, width, height };
+            renderer.UIRect({ box.x + 2.0f, box.y + 2.0f, box.w, box.h }, theme.shadow.WithAlpha(0.55f));
+            renderer.UIRect(box, theme.panelAlt.WithAlpha(0.97f));
+            renderer.UIRectOutline(box, theme.borderStrong, theme.borderThickness);
+            for (size_t i = 0; i < m_tooltipLines.size(); ++i)
+            {
+                f32 cursor = box.x + theme.padding;
+                for (const TooltipSpan& span : m_tooltipLines[i])
+                {
+                    renderer.UIText(span.text, { cursor, box.y + theme.padding + i * lineHeight }, span.color);
+                    cursor += renderer.TextWidth(span.text);
+                }
+            }
+            m_tooltipLines.clear();
+            return;
+        }
 
         const f32 lineHeight = renderer.TextHeight();
         std::vector<std::string> lines = m_tooltip.empty()
@@ -893,11 +929,19 @@ namespace woc
         if (text.empty()) return;
         m_tooltip = text;
         m_tooltipAccent.clear();
+        m_tooltipLines.clear();
     }
 
     void UI::TooltipIfHovered(const Rect& rect, const std::string& text)
     {
         if (IsHovered(rect)) Tooltip(text);
+    }
+
+    void UI::Tooltip(std::vector<std::vector<TooltipSpan>> lines)
+    {
+        m_tooltip.clear();
+        m_tooltipAccent.clear();
+        m_tooltipLines = std::move(lines);
     }
 
     void UI::Tooltip(const std::string& text, const std::string& accent, const Color& accentColor)
