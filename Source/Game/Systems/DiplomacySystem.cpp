@@ -2,7 +2,6 @@
 #include "CoverageSystem.h"
 #include "FogSystem.h"
 #include "../Factories/CharacterFactory.h"
-#include "../Players/AIPlayer.h"
 #include "../World/World.h"
 #include "../../Core/Config.h"
 #include "../../Core/Random.h"
@@ -472,10 +471,10 @@ namespace woc
                 {
                     // Whether to sue for peace is this lord's own reckoning of the war; whether
                     // it is granted is the other side's.
-                    AIPlayer* lord = nullptr;
+                    const IPlayer* lord = nullptr;
                     for (const Scope<IPlayer>& player : world.Players())
                     {
-                        if (player->StateId() == id && !player->IsHuman()) { lord = dynamic_cast<AIPlayer*>(player.get()); break; }
+                        if (player->StateId() == id) { lord = player.get(); break; }
                     }
                     // Asking is the mirror of accepting: a lord who would accept peace from the
                     // enemy is one who would ask for it.
@@ -555,14 +554,10 @@ namespace woc
         }
 
         // An AI answers at once.
-        AIPlayer* lord = nullptr;
+        const IPlayer* lord = nullptr;
         for (const Scope<IPlayer>& player : world.Players())
         {
-            if (player->StateId() == to && !player->IsHuman())
-            {
-                lord = dynamic_cast<AIPlayer*>(player.get());
-                break;
-            }
+            if (player->StateId() == to) { lord = player.get(); break; }
         }
         const bool accepted = lord && lord->WeighOffer(world, from, static_cast<i32>(kind));
 

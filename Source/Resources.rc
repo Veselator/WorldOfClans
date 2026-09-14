@@ -1,0 +1,9 @@
+// Resources baked into the executable: the icon Explorer and the taskbar show, and copies of
+// the window icon and cursor for when the Sprites folder is missing next to the exe.
+// Numeric ids, kept in step with Source/Platform/Window.cpp.
+
+1   ICON    "../Sprites/Icon.ico"
+101 ICON    "../Sprites/Icon.ico"
+// The cursor goes in as an icon on purpose: the file stores no usable hotspot, so the
+// window builds the cursor from it with the hotspot at the top-left corner.
+102 ICON    "../Sprites/Cursor.cur"

@@ -65,9 +65,11 @@ def configuration_block(config, platform):
 def main():
     sources = collect({".cpp", ".c"}) + THIRD_PARTY_SOURCES
     headers = collect({".h", ".hpp"})
+    resources = collect({".rc"})
 
     compile_items = "\n".join(f'    <ClCompile Include="{path}" />' for path in sources)
     header_items = "\n".join(f'    <ClInclude Include="{path}" />' for path in headers)
+    resource_items = "\n".join(f'    <ResourceCompile Include="{path}" />' for path in resources)
 
     configs = [("Debug", "x64"), ("Release", "x64")]
     project_configs = "\n".join(
@@ -125,6 +127,9 @@ def main():
   <ItemGroup>
 {header_items}
   </ItemGroup>
+  <ItemGroup>
+{resource_items}
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>
@@ -135,7 +140,7 @@ def main():
 
     # --- filters: mirror the folder layout so the Solution Explorer is navigable ----------
     folders = set()
-    for path in sources + headers:
+    for path in sources + headers + resources:
         parts = path.split("\\")[:-1]
         for i in range(1, len(parts) + 1):
             folders.add("\\".join(parts[:i]))
@@ -163,6 +168,9 @@ def main():
   </ItemGroup>
   <ItemGroup>
 {entries("ClInclude", headers)}
+  </ItemGroup>
+  <ItemGroup>
+{entries("ResourceCompile", resources)}
   </ItemGroup>
 </Project>
 """

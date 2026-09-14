@@ -7,6 +7,7 @@
 
 struct HWND__;
 struct HINSTANCE__;
+struct HICON__;
 
 namespace woc
 {
@@ -43,6 +44,9 @@ namespace woc
         /// Resizes the client area; ignored while full screen.
         void SetClientSize(u32 width, u32 height);
 
+        /// Rebuilds the pointer at `scale` times the size it is drawn at in Sprites/Cursor.cur.
+        void SetCursorScale(f32 scale);
+
         /// Puts a UTF-8 string on the system clipboard. Free-standing because it has
         /// nothing to do with any particular window, and the lobby wants it for its code.
         static bool SetClipboardText(const std::string& text);
@@ -61,6 +65,8 @@ namespace woc
         bool m_shouldClose = false;
         bool m_resized = false;
         bool m_fullscreen = false;
+        HICON__* m_cursor = nullptr;
+        f32 m_cursorScale = 1.0f;
         u32 m_highSurrogate = 0;
         i32 m_windowedRect[4]{};   // left, top, width, height before going full screen
     };

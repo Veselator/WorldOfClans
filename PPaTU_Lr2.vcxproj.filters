@@ -570,4 +570,9 @@
       <Filter>Source\UI</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Source\Resources.rc">
+      <Filter>Source</Filter>
+    </ResourceCompile>
+  </ItemGroup>
 </Project>

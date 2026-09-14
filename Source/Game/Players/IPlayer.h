@@ -27,6 +27,14 @@ namespace woc
         /// Called on the AI cadence configured in game.json.
         virtual void OnThink(World& world, i32 day) { (void)world; (void)day; }
 
+        /// Answers an embassy from `from` on the spot. A seat that cannot answer at once - a
+        /// person, who is asked in a dialog instead - declines by default.
+        virtual bool WeighOffer(const World& world, EntityId from, i32 kind) const
+        {
+            (void)world; (void)from; (void)kind;
+            return false;
+        }
+
         /// What the player keeps in its head between thinks, for saves and resynchronisation.
         virtual Json ToJson() const { return Json::MakeObject(); }
         virtual void FromJson(const Json& node) { (void)node; }

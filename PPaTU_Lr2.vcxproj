@@ -266,6 +266,9 @@
     <ClInclude Include="Source\UI\Theme.h" />
     <ClInclude Include="Source\UI\UI.h" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Source\Resources.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

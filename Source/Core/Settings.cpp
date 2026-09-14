@@ -131,6 +131,10 @@ namespace woc
         Theme::Get().SetScale(uiScale);
         renderer.SetUIScale(uiScale);
 
+        // The pointer grows with the interface: a base size from game.json, times the
+        // interface scale the player chose.
+        window.SetCursorScale(ConfigManager::Get().Float("render/cursorScale", 1.5f) * uiScale);
+
         Camera& camera = renderer.GetCamera();
         camera.Configure(ConfigManager::Get().Float("camera/pitchDegrees", 46.0f),
                          camera.MinZoom(), camera.MaxZoom(), camera.Zoom());

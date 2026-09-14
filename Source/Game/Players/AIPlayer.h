@@ -39,7 +39,7 @@ namespace woc
         /// an aggressive prince dislikes being tied down, a cautious one likes friends - and
         /// the state of things decides the rest: who is stronger, and, for a peace, who is
         /// winning the war. Deterministic, so every machine in a party reaches the same answer.
-        bool WeighOffer(const World& world, EntityId from, i32 kind) const;
+        bool WeighOffer(const World& world, EntityId from, i32 kind) const override;
         Json ToJson() const override;
         void FromJson(const Json& node) override;
 

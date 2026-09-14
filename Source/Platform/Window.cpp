@@ -1,10 +1,16 @@
 #include "Window.h"
 #include "Input.h"
 #include "../Core/Log.h"
+#include "../Core/Paths.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <cmath>
+#include <vector>
+#include <string>
+#include <cstdio>
+#include <algorithm>
 
 namespace woc
 {
@@ -59,6 +65,155 @@ namespace woc
         Destroy();
     }
 
+    namespace
+    {
+        // Ids of the copies baked in by Source/Resources.rc.
+        constexpr WORD kIconResource = 101;
+        constexpr WORD kCursorResource = 102;
+
+        /// An .ico or .cur file from Sprites, or the copy in the executable when the file is
+        /// not there. Loaded at its own size: it is pixel art and must not be resampled.
+        HICON LoadPicture(HINSTANCE instance, const std::string& file, WORD resource, UINT type)
+        {
+            const std::wstring path = Widen(Paths::Get().Root() + "/Sprites/" + file);
+            HANDLE image = LoadImageW(nullptr, path.c_str(), type, 0, 0, LR_LOADFROMFILE);
+            if (!image) image = LoadImageW(instance, MAKEINTRESOURCEW(resource), IMAGE_ICON, 0, 0, 0);
+            return static_cast<HICON>(image);
+        }
+
+        /// Reads a bitmap's pixels as 32-bit BGRA, top row first.
+        bool ReadPixels(HBITMAP bitmap, i32 width, i32 height, std::vector<u32>& out)
+        {
+            BITMAPINFO info{};
+            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth = width;
+            info.bmiHeader.biHeight = -height;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            out.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+            HDC dc = GetDC(nullptr);
+            const int rows = GetDIBits(dc, bitmap, 0, static_cast<UINT>(height), out.data(), &info, DIB_RGB_COLORS);
+            ReleaseDC(nullptr, dc);
+            return rows == height;
+        }
+
+        /// The game's pointer, `scale` times its drawn size. The picture is pixel art, so it
+        /// is enlarged by repeating pixels rather than by smoothing them. A real cursor file
+        /// carries its own hotspot; an icon-format file does not, so its tip is taken to be
+        /// the top-left pixel.
+        HCURSOR LoadGameCursor(HINSTANCE instance, f32 scale)
+        {
+            const std::string file = "Cursor.cur";
+            const std::wstring path = Widen(Paths::Get().Root() + "/Sprites/" + file);
+
+            // Bytes 2-3 of the header: 1 for an icon, 2 for a cursor.
+            WORD kind = 0;
+            if (FILE* handle = _wfopen(path.c_str(), L"rb"))
+            {
+                WORD header[2]{};
+                if (std::fread(header, sizeof(WORD), 2, handle) == 2) kind = header[1];
+                std::fclose(handle);
+            }
+
+            HICON source = nullptr;
+            if (kind == 2) source = static_cast<HICON>(LoadImageW(nullptr, path.c_str(), IMAGE_CURSOR, 0, 0, LR_LOADFROMFILE));
+            if (!source) source = LoadPicture(instance, file, kCursorResource, IMAGE_ICON);
+            if (!source) return LoadCursorW(nullptr, IDC_ARROW);
+
+            ICONINFO info{};
+            if (!GetIconInfo(source, &info))
+            {
+                DestroyIcon(source);
+                return LoadCursorW(nullptr, IDC_ARROW);
+            }
+            const bool ownHotspot = kind == 2;
+            HCURSOR cursor = nullptr;
+
+            BITMAP shape{};
+            if (info.hbmColor && GetObjectW(info.hbmColor, sizeof(shape), &shape))
+            {
+                const i32 width = shape.bmWidth;
+                const i32 height = shape.bmHeight;
+                std::vector<u32> colour;
+                std::vector<u32> mask;
+                if (ReadPixels(info.hbmColor, width, height, colour))
+                {
+                    // An old picture without an alpha channel says what is see-through in its mask.
+                    const bool hasAlpha = std::any_of(colour.begin(), colour.end(), [](u32 px) { return (px >> 24) != 0; });
+                    if (!hasAlpha && info.hbmMask && ReadPixels(info.hbmMask, width, height, mask))
+                    {
+                        for (size_t i = 0; i < colour.size(); ++i)
+                        {
+                            if ((mask[i] & 0x00FFFFFF) == 0) colour[i] |= 0xFF000000u;
+                        }
+                    }
+
+                    const f32 factor = std::max(0.25f, scale);
+                    const i32 outWidth = std::max(1, static_cast<i32>(std::lround(static_cast<f32>(width) * factor)));
+                    const i32 outHeight = std::max(1, static_cast<i32>(std::lround(static_cast<f32>(height) * factor)));
+
+                    BITMAPV5HEADER header{};
+                    header.bV5Size = sizeof(header);
+                    header.bV5Width = outWidth;
+                    header.bV5Height = -outHeight;
+                    header.bV5Planes = 1;
+                    header.bV5BitCount = 32;
+                    header.bV5Compression = BI_BITFIELDS;
+                    header.bV5RedMask = 0x00FF0000;
+                    header.bV5GreenMask = 0x0000FF00;
+                    header.bV5BlueMask = 0x000000FF;
+                    header.bV5AlphaMask = 0xFF000000;
+
+                    HDC dc = GetDC(nullptr);
+                    void* bits = nullptr;
+                    HBITMAP scaled = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&header), DIB_RGB_COLORS, &bits, nullptr, 0);
+                    ReleaseDC(nullptr, dc);
+
+                    // The monochrome mask, rows padded to 16 bits: set where the picture is clear.
+                    const i32 stride = ((outWidth + 15) / 16) * 2;
+                    std::vector<u8> maskBits(static_cast<size_t>(stride) * static_cast<size_t>(outHeight), 0);
+
+                    if (scaled && bits)
+                    {
+                        u32* target = static_cast<u32*>(bits);
+                        for (i32 y = 0; y < outHeight; ++y)
+                        {
+                            const i32 sy = std::min(height - 1, static_cast<i32>(static_cast<f32>(y) / factor));
+                            for (i32 x = 0; x < outWidth; ++x)
+                            {
+                                const i32 sx = std::min(width - 1, static_cast<i32>(static_cast<f32>(x) / factor));
+                                const u32 px = colour[static_cast<size_t>(sy) * static_cast<size_t>(width) + static_cast<size_t>(sx)];
+                                target[static_cast<size_t>(y) * static_cast<size_t>(outWidth) + static_cast<size_t>(x)] = px;
+                                if ((px >> 24) == 0)
+                                {
+                                    maskBits[static_cast<size_t>(y) * static_cast<size_t>(stride) + static_cast<size_t>(x / 8)] |=
+                                        static_cast<u8>(0x80 >> (x % 8));
+                                }
+                            }
+                        }
+
+                        HBITMAP scaledMask = CreateBitmap(outWidth, outHeight, 1, 1, maskBits.data());
+                        ICONINFO made{};
+                        made.fIcon = FALSE;
+                        made.xHotspot = ownHotspot ? static_cast<DWORD>(std::lround(static_cast<f32>(info.xHotspot) * factor)) : 0;
+                        made.yHotspot = ownHotspot ? static_cast<DWORD>(std::lround(static_cast<f32>(info.yHotspot) * factor)) : 0;
+                        made.hbmColor = scaled;
+                        made.hbmMask = scaledMask;
+                        cursor = CreateIconIndirect(&made);
+                        if (scaledMask) DeleteObject(scaledMask);
+                    }
+                    if (scaled) DeleteObject(scaled);
+                }
+            }
+
+            if (info.hbmColor) DeleteObject(info.hbmColor);
+            if (info.hbmMask) DeleteObject(info.hbmMask);
+            DestroyIcon(source);
+            return cursor ? cursor : LoadCursorW(nullptr, IDC_ARROW);
+        }
+    }
+
     bool Window::Create(const std::string& title, u32 width, u32 height)
     {
         m_instance = GetModuleHandleW(nullptr);
@@ -68,10 +223,13 @@ namespace woc
         wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
         wc.lpfnWndProc = reinterpret_cast<WNDPROC>(&Window::WindowProc);
         wc.hInstance = m_instance;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        m_cursor = LoadGameCursor(m_instance, 1.0f);
+        wc.hCursor = m_cursor;
         wc.hbrBackground = nullptr;
         wc.lpszClassName = kClassName;
-        wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+        wc.hIcon = LoadPicture(m_instance, "Icon.ico", kIconResource, IMAGE_ICON);
+        if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+        wc.hIconSm = wc.hIcon;
         if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         {
             WOC_LOG_ERROR("RegisterClassExW failed: ", GetLastError());
@@ -104,6 +262,22 @@ namespace woc
         m_height = static_cast<u32>(client.bottom - client.top);
         WOC_LOG_INFO("Window created ", m_width, "x", m_height);
         return true;
+    }
+
+    void Window::SetCursorScale(f32 scale)
+    {
+        if (!m_hwnd || std::abs(scale - m_cursorScale) < 0.001f) return;
+        HCURSOR fresh = LoadGameCursor(m_instance, scale);
+        if (!fresh) return;
+        m_cursorScale = scale;
+
+        // The class cursor is what Windows puts back whenever the pointer moves over the
+        // window; SetCursor swaps the one showing right now.
+        SetClassLongPtrW(m_hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(fresh));
+        SetCursor(fresh);
+        if (m_cursor) DestroyCursor(m_cursor);
+        m_cursor = fresh;
+        WOC_LOG_INFO("Cursor scale ", scale);
     }
 
     void Window::Destroy()

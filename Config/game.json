@@ -7,6 +7,8 @@
   },
 
   "render": {
+    "//cursorScale": "Базовий розмір курсора відносно Sprites/Cursor.cur; множиться на масштаб інтерфейсу. Цілі добутки (2, 3) дають найчіткіші пікселі",
+    "cursorScale": 1.5,
     "validation": false,
     "vsync": true,
     "forestTiling": 30.0,
