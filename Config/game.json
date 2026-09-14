@@ -310,6 +310,8 @@
   },
 
   "movement": {
+    "//pursuit": "Переслідувач перераховує шлях, коли ціль відійшла від точки, куди він іде, далі ніж на стільки пікселів",
+    "pursuitRepathDistance": 8.0,
     "baseSpeed": 14.0,
     "roadSpeedMultiplier": 1.9,
     "moraleRecoveryPerDay": 0.05,

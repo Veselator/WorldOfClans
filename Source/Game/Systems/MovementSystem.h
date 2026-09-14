@@ -63,6 +63,10 @@ namespace woc
         /// not walk into a river because the ring said so.
         static Vec2 NearestStanding(const MapData& map, const Vec2& wanted, f32 searchRadius = 120.0f);
         void OnArrival(World& world, Cohort& cohort);
+        /// Hosts ordered after an enemy host follow where it is now, not where it was when
+        /// the order was given. Re-routes when the quarry has moved far enough from the
+        /// point being marched on; gives up when it is gone or no longer an enemy.
+        void UpdatePursuits(World& world);
         void UpdateSupply(World& world, Cohort& cohort, f32 days);
     };
 }

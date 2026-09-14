@@ -192,6 +192,10 @@ namespace woc
     {
         if (days <= 0.0f) return;
 
+        // Every chaser reads the positions as they stand before anybody moves this tick,
+        // so who is processed first makes no difference.
+        UpdatePursuits(world);
+
         for (auto& [id, cohort] : world.Cohorts())
         {
             UpdateSupply(world, cohort, days);
@@ -465,6 +469,57 @@ namespace woc
         if (task.waypointIndex >= task.waypoints.size())
         {
             OnArrival(world, cohort);
+        }
+    }
+
+    void MovementSystem::UpdatePursuits(World& world)
+    {
+        ConfigManager& config = ConfigManager::Get();
+        const f32 repath = config.Float("movement/pursuitRepathDistance", 8.0f);
+        const f32 contact = config.Float("battle/engagementRadius", 18.0f) * 0.6f;
+
+        std::vector<std::pair<EntityId, EntityId>> chases;   // chaser, quarry
+        for (const auto& [id, cohort] : world.Cohorts())
+        {
+            if (cohort.currentTask.targetCohort == kInvalidId || cohort.inBattle) continue;
+            chases.emplace_back(id, cohort.currentTask.targetCohort);
+        }
+        std::sort(chases.begin(), chases.end());
+
+        for (const auto& [chaserId, quarryId] : chases)
+        {
+            Cohort* chaser = world.FindCohort(chaserId);
+            if (!chaser) continue;
+            const Cohort* quarry = world.FindCohort(quarryId);
+
+            // Nothing left to chase: destroyed, or peace has been made with it.
+            if (!quarry || quarry->IsEmpty() || !world.AreHostile(chaser->clan, quarry->clan))
+            {
+                chaser->currentTask.Clear();
+                continue;
+            }
+
+            const f32 gap = Distance(chaser->position, quarry->position);
+            const bool drifted = Distance(chaser->currentTask.destination, quarry->position) > repath;
+            const bool standing = !chaser->currentTask.IsMoving();
+            if (!drifted && !(standing && gap > contact)) continue;
+
+            // Close in straight when it is near; round the ground when it is not.
+            const Vec2 goal = quarry->position;
+            if (gap < 40.0f && world.Map().MoveCost(world.Map().ToTile(goal)) > 0.0f)
+            {
+                Task& task = chaser->currentTask;
+                task.destination = goal;
+                task.waypoints = { goal };
+                task.waypointIndex = 0;
+                continue;
+            }
+            // No way to it at all (across water, say): the chase is off rather than
+            // searched for again every tick.
+            if (!OrderTask(world, chaserId, chaser->currentTask.type, goal, kInvalidId, quarryId))
+            {
+                chaser->currentTask.Clear();
+            }
         }
     }
 
